@@ -1,0 +1,11 @@
+
+# Development Files
+/private.key
+/private.key-protected
+/public.key
+
+# Cached files
+/cache/**
+
+# Debug Builds
+__debug_bin**
