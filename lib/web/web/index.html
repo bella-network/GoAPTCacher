@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="Content-Type" content="text/html; charset=utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="content-language" content="en">
+
+	<title>{{ .Title }}</title>
+	<link rel="stylesheet" href="style.css">
+
+	<meta name="Robots" content="noindex, follow">
+</head>
+<body>
+	<div class="container">
+		<header>
+			<h1>{{ .Title }}</h1>
+		</header>
+		<main>
+			{{ .Content }}
+		</main>
+		<footer>
+			<a href="https://gitlab.com/bella.network/goaptcacher" target="_blank">GoAPTCacher/{{ .Const.Version }}</a> &ndash;
+			<a href="/_goaptcacher/setup">Setup</a> &ndash;
+			<a href="/_goaptcacher/stats">Stats</a> &ndash;
+			Made by <a href="https://bella.network?utm_source=goaptcacher" target="_blank">Thomas Bella</a>
+		</footer>
+	</div>
+</body>
+</html>

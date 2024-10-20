@@ -81,6 +81,7 @@ func initiateStructure(db *sql.DB) error {
 		last_checked TEXT NOT NULL,
 		remote_last_modified TEXT NOT NULL,
 		etag TEXT,
+		size INTEGER NOT NULL,
 		url TEXT NOT NULL,
 		PRIMARY KEY (domain, path),
 		UNIQUE (url)
@@ -122,6 +123,18 @@ func initiateStructure(db *sql.DB) error {
 		path TEXT NOT NULL,
 		mark_time INTEGER NOT NULL,
 		PRIMARY KEY (domain, path)
+	)`); err != nil {
+		return err
+	}
+
+	// stats table is used to keep an index of statistics.
+	if _, err := db.Exec(`CREATE TABLE stats (
+		date TEXT PRIMARY KEY,
+		requests INTEGER NOT NULL,
+		hits INTEGER NOT NULL,
+		misses INTEGER NOT NULL,
+		traffic_down INTEGER NOT NULL,
+		traffic_up INTEGER NOT NULL
 	)`); err != nil {
 		return err
 	}

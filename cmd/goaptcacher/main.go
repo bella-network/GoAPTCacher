@@ -49,6 +49,17 @@ func main() {
 		log.Printf("[INFO] Loaded %d domains and %d passthrough domains\n", len(config.Domains), len(config.PassthroughDomains))
 	}
 
+	// Show warning if index page is not enabled and show hint how to use the proxy
+	if !config.Index.Enable {
+		log.Printf("[INFO] Index page is disabled. Use this servers IP address or hostname to access the proxy server.")
+	} else {
+		if len(config.Index.Hostnames) == 0 {
+			log.Printf("[WARN] Index page is enabled but no hostnames are configured. The index page will not be shown.")
+		} else {
+			log.Printf("[INFO] Index page is enabled. Access the proxy server using the following hostnames: %v", config.Index.Hostnames)
+		}
+	}
+
 	// If HTTPS interception is enabled, load the certificate and key files.
 	// Initialize the interception handler for future processing.
 	if config.HTTPS.Intercept {
@@ -86,7 +97,10 @@ func main() {
 	// Initiate cache
 	cache = fscache.NewFSCache(config.CacheDirectory)
 
-	go ListenHTTPS()
+	if config.HTTPS.Intercept {
+		go ListenHTTPS()
+	}
+
 	go ListenHTTP()
 
 	// Wait forever

@@ -51,6 +51,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			if lastAccess.RemoteLastModified.Before(parsedTime) {
 				w.WriteHeader(http.StatusNotModified)
 				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", r.RemoteAddr, r.URL.Host, r.URL.Path)
+				go c.accessCache.TrackRequest(true, 0)
 				return
 			}
 		}
@@ -68,6 +69,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		http.ServeFile(w, r, c.buildLocalPath(r.URL))
 
 		log.Printf("[INFO:GET:HIT:%s] %s\n", r.RemoteAddr, r.URL.String())
+		go c.accessCache.TrackRequest(true, lastAccess.Size)
 
 		return
 	}
@@ -115,6 +117,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 			RemoteLastModified: fileInfo.ModTime(),
 			LastAccessed:       time.Now(),
 			URL:                r.URL.String(),
+			Size:               fileInfo.Size(),
 		})
 
 		// Set header that describes the cache hit
@@ -225,7 +228,9 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		LastChecked:        time.Now(),
 		ETag:               resp.Header.Get("ETag"),
 		URL:                r.URL.String(),
+		Size:               bw,
 	})
 
 	log.Printf("[INFO:DL:CREATED] %s%s - Wrote %d bytes\n", r.URL.Host, r.URL.Path, bw)
+	go c.accessCache.TrackRequest(false, bw)
 }

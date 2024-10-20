@@ -169,7 +169,7 @@ func (c *FSCache) cacheRefesh(localFile *url.URL, lastAccess AccessEntry) {
 	}
 
 	// Update the access cache with the new file
-	c.accessCache.UpdateFile(localFile.Host, localFile.Path, lastAccess.URL, lastModified, etag)
+	c.accessCache.UpdateFile(localFile.Host, localFile.Path, lastAccess.URL, lastModified, etag, wrb)
 
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 }

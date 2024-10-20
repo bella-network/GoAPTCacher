@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// handleTunnel tunnels the request to the target host without any caching or
+// handleTUNNEL tunnels the request to the target host without any caching or
 // interception. This is used for CONNECT requests and passthrough domains.
-func handleTunnel(w http.ResponseWriter, r *http.Request) {
+func handleTUNNEL(w http.ResponseWriter, r *http.Request) {
 	// If in r.Host the port is not specified, append the default HTTP port. Do
 	// not simply check for ":" as a IPv6 address would also contain a colon.
 	// TODO: Check if this is really necessary

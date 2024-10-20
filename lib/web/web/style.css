@@ -1,0 +1,85 @@
+html, body {
+	margin: 0;
+	padding: 0;
+	font-family: Arial, sans-serif;
+	font-size: 16px;
+	line-height: 1.5;
+	color: #333;
+	background-color: #ececec;
+}
+
+/* Container */
+div.container {
+	width: 100%;
+	max-width: 1200px;
+	margin: 20px auto;
+	border: 1px solid #ccc;
+	box-shadow: 0 0 10px #ccc;
+}
+
+/* Header */
+div.container header {
+	background-color: #333;
+	color: #fff;
+	padding: 10px 0;
+	text-align: center;
+}
+div.container header h1 {
+	margin: 0;
+}
+div.container header nav {
+	text-align: center;
+}
+div.container header nav a {
+	color: #fff;
+	text-decoration: none;
+	padding: 0 10px;
+}
+div.container header nav a:hover {
+	background-color: #555;
+}
+
+/* Main content */
+div.container main {
+	padding: 20px;
+	background-color: #fff;
+}
+div.container main h2 {
+	margin-top: 0;
+}
+div.container main p {
+	margin: 0 0 20px;
+}
+div.container main table {
+	width: 100%;
+	border-collapse: collapse;
+}
+div.container main table th, div.container main table td {
+	border: 1px solid #ccc;
+	padding: 5px;
+}
+div.container main table th {
+	background-color: #f9f9f9;
+}
+div.container main table tr:nth-child(2n) {
+	background-color: #f9f9f9;
+}
+div.container main table tr:hover {
+	background-color: #f1f1f1;
+}
+div.container main table caption {
+	font-weight: bold;
+}
+
+/* Footer */
+div.container footer {
+	background-color: #585858;
+	color: #fff;
+	text-align: center;
+	padding: 10px 0;
+	font-size: 0.8em;
+}
+div.container footer a {
+	color: #dfdfdf;
+	text-decoration: underline;
+}

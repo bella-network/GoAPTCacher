@@ -9,6 +9,7 @@
 package fscache
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -49,6 +50,11 @@ func NewFSCache(cachePath string) *FSCache {
 	}
 }
 
+// GetDatabaseConnection returns the database connection of the FSCache.
+func (c *FSCache) GetDatabaseConnection() *sql.DB {
+	return c.accessCache.GetDatabaseConnection()
+}
+
 // buildLocalPath builds the local path for the given request.
 func (c *FSCache) buildLocalPath(rq *url.URL) string {
 	if c.CustomCachePath != nil {
@@ -71,7 +77,7 @@ func (c *FSCache) validateRequest(r *http.Request) error {
 	}
 
 	// Check if the used HTTP Host is a valid domain
-	if govalidator.IsDNSName(r.URL.Host) == false {
+	if !govalidator.IsDNSName(r.URL.Host) {
 		return fmt.Errorf("Invalid host")
 	}
 

@@ -11,6 +11,12 @@ type Config struct {
 	ListenPort       int    `yaml:"listen_port"`        // Port on which the proxy server listens
 	ListenPortSecure int    `yaml:"listen_port_secure"` // Port on which the proxy server listens for HTTPS requests
 
+	Index struct {
+		Enable    bool     `yaml:"enable"`    // Enable the overview page which is shown when accessing the proxy server directly. This also sets a AIA extension in the certificate.
+		Hostnames []string `yaml:"hostnames"` // List of hostnames which should be used for configuration or for direct access to the overview page
+		Contact   string   `yaml:"contact"`   // Contact information which is shown on the overview page (HTML is allowed)
+	} `yaml:"index"`
+
 	Domains            []string `yaml:"domains"`             // List of domains which are allowed to be cached and proxied
 	PassthroughDomains []string `yaml:"passthrough_domains"` // List of domains which are allowed to be proxied without caching
 

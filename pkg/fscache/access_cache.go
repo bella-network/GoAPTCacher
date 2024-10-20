@@ -15,6 +15,7 @@ type AccessEntry struct {
 	RemoteLastModified time.Time `json:"remote_last_modified,omitempty"`
 	ETag               string    `json:"etag,omitempty"`
 	URL                string    `json:"url,omitempty"`
+	Size               int64     `json:"size,omitempty"`
 }
 
 // accessCache is a cache for file access information.
@@ -40,16 +41,21 @@ func newAccessCache(file string) (*accessCache, error) {
 	}, nil
 }
 
+// GetDatabaseConnection returns the database connection of the accessCache.
+func (ac *accessCache) GetDatabaseConnection() *sql.DB {
+	return ac.db
+}
+
 // Set sets the access information for a given domain and path.
 func (ac *accessCache) Get(domain, path string) (AccessEntry, bool) {
 	row := ac.db.QueryRow(
-		"SELECT last_accessed, last_checked, remote_last_modified, etag, url FROM access_cache WHERE domain = ? AND path = ?",
+		"SELECT last_accessed, last_checked, remote_last_modified, etag, size, url FROM access_cache WHERE domain = ? AND path = ?",
 		domain,
 		path,
 	)
 
 	var entry AccessEntry
-	err := row.Scan(&entry.LastAccessed, &entry.LastChecked, &entry.RemoteLastModified, &entry.ETag, &entry.URL)
+	err := row.Scan(&entry.LastAccessed, &entry.LastChecked, &entry.RemoteLastModified, &entry.ETag, &entry.Size, &entry.URL)
 	if err != nil {
 		return AccessEntry{}, false
 	}
@@ -60,13 +66,14 @@ func (ac *accessCache) Get(domain, path string) (AccessEntry, bool) {
 // Set sets the access information for a given key.
 func (ac *accessCache) Set(domain, path string, entry AccessEntry) error {
 	_, err := ac.db.Exec(
-		"INSERT INTO access_cache (domain, path, last_accessed, last_checked, remote_last_modified, etag, url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO access_cache (domain, path, last_accessed, last_checked, remote_last_modified, etag, size, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		domain,
 		path,
 		entry.LastAccessed,
 		entry.LastChecked,
 		entry.RemoteLastModified,
 		entry.ETag,
+		entry.Size,
 		entry.URL,
 	)
 
@@ -110,13 +117,14 @@ func (ac *accessCache) GetURL(domain, path string) string {
 }
 
 // UpdateFile updates the file for the given key.
-func (ac *accessCache) UpdateFile(domain, path, url string, lastModified time.Time, etag string) {
+func (ac *accessCache) UpdateFile(domain, path, url string, lastModified time.Time, etag string, size int64) {
 	_, _ = ac.db.Exec(
-		"UPDATE access_cache SET last_accessed = ?, last_checked = ?, remote_last_modified = ?, etag = ?, url = ? WHERE domain = ? AND path = ?",
+		"UPDATE access_cache SET last_accessed = ?, last_checked = ?, remote_last_modified = ?, etag = ?, size = ?, url = ? WHERE domain = ? AND path = ?",
 		time.Now(),
 		time.Now(),
 		lastModified,
 		etag,
+		size,
 		url,
 		domain,
 		path,
@@ -158,11 +166,8 @@ func (ac *accessCache) HasFileLock(domain, path string) bool {
 
 	var uuid string
 	err := row.Scan(&uuid)
-	if err != nil {
-		return false
-	}
 
-	return true
+	return err == nil
 }
 
 // CreateWriteLock creates a write lock for the given domain and path.
@@ -191,11 +196,8 @@ func (ac *accessCache) HasWriteLock(domain, path string) bool {
 
 	var lockTime int64
 	err := row.Scan(&lockTime)
-	if err != nil {
-		return false
-	}
 
-	return true
+	return err == nil
 }
 
 // CreateExclusiveWriteLock locks the write lock for the given domain if it is
@@ -210,14 +212,16 @@ func (ac *accessCache) CreateExclusiveWriteLock(domain, path string) bool {
 	}
 
 	err := ac.CreateWriteLock(domain, path)
-	if err != nil {
-		return false
-	}
 
-	return true
+	return err == nil
 }
 
 // MarkForDeletion marks the given domain and path for deletion.
 func (ac *accessCache) MarkForDeletion(domain, path string) {
 	_, _ = ac.db.Exec("INSERT INTO marked_files (domain, path, mark_time) VALUES (?, ?, ?)", domain, path, time.Now().Unix())
+}
+
+// TrackRequest tracks a request in the database.
+func (ac *accessCache) TrackRequest(cacheHit bool, transferred int64) error {
+	return cdb.TrackRequest(ac.db, cacheHit, transferred)
 }
