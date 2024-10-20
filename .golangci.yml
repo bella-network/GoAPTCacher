@@ -1,0 +1,29 @@
+---
+linters-settings:
+  misspell:
+    locale: "US"
+
+linters:
+  enable:
+    - bodyclose
+    - errcheck
+    - exhaustive
+    - exportloopref
+    - gocritic
+    - goimports
+    - revive
+    - gomodguard
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - makezero
+    - misspell
+    - prealloc
+    - rowserrcheck
+    - staticcheck
+    - typecheck
+    - unparam
+    - unused
+    - whitespace

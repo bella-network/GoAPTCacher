@@ -1,0 +1,82 @@
+image: thomas2500/golang-helper
+
+stages:
+  - test
+  - analysis
+#  - build
+
+# Test formatting, suspicious constructs and predefined tests. Creates code coverage statistics and saves a HTML coverage report to coverage/
+test:
+  stage: test
+  before_script:
+    - mkdir -p /usr/local/share/ca-certificates
+    - wget -O /usr/local/share/ca-certificates/bella-network.crt http://ca.bella.pm/root_ca.crt
+    - update-ca-certificates
+  script:
+    - env CGO_ENABLED=0 go fmt $(go list ./...)
+    - env CGO_ENABLED=0 go vet $(go list ./...) || true
+    - env CGO_ENABLED=0 go test -v -cover -coverprofile=coverage.out -covermode=atomic $(go list ./...); mkdir coverage; go tool cover -html=coverage.out -o coverage/index.html
+  artifacts:
+    expire_in: 1 hour
+    untracked: true
+    paths:
+      - coverage/
+      - coverage.out
+  allow_failure: true
+
+lint:
+  stage: test
+  before_script:
+    - mkdir -p /usr/local/share/ca-certificates
+    - wget -O /usr/local/share/ca-certificates/bella-network.crt http://ca.bella.pm/root_ca.crt
+    - update-ca-certificates
+  script:
+    # Use default .golangci.yml file from the image if one is not present in the project root.
+    - '[ -e .golangci.yml ] || cp /golangci/.golangci.yml .'
+    # Write the code coverage report to gl-code-quality-report.json
+    # and print linting issues to stdout in the format: path/to/file:line description
+    # remove `--issues-exit-code 0` or set to non-zero to fail the job if linting issues are detected
+    - golangci-lint run --issues-exit-code 0 --out-format code-climate | tee gl-code-quality-report.json | jq -r '.[] | "\(.location.path):\(.location.lines.begin) \(.description)"'
+  artifacts:
+    reports:
+      codequality: gl-code-quality-report.json
+    paths:
+      - gl-code-quality-report.json
+    expire_in: 1 hour
+  allow_failure: true
+  only:
+    - main
+
+sonarqube-check:
+  stage: analysis
+  image:
+    name: registry.gitlab.com/bella.network/sonar-scanner:latest
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 0
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  dependencies:
+    - test
+  script:
+    - sonar-scanner
+  allow_failure: true
+
+.build:
+  stage: build
+  before_script:
+    - mkdir -p /usr/local/share/ca-certificates
+    - wget -O /usr/local/share/ca-certificates/bella-network.crt http://ca.bella.pm/root_ca.crt
+    - update-ca-certificates
+  script:
+    # Get current Go version
+    - go version
+    # Build program
+    - bash ./tools/build.sh $CI_PROJECT_DIR/build/ cmd/pv-proxy
+  artifacts:
+    expire_in: 2 hour
+    paths:
+      - build/
