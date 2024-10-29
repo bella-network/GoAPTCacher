@@ -22,6 +22,7 @@ type Intercept struct {
 	publicKey  *x509.Certificate // Public key of the Intermediate CA or Root CA used to sign the fake certificates
 	privateKey *rsa.PrivateKey   // Private key of the Intermediate CA or Root CA used to sign the fake certificates
 	rootCA     *x509.Certificate // Root CA certificate to complete the chain of trust
+	domain     string            // Primary domain (and port) of the HTTP server. Used to serve AIA certificates.
 
 	// certificateStorage contains all issued certificates including rw lock
 	certStorage certificateStorage
@@ -102,6 +103,12 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 			Certificates: make(map[string]IssuedCertificate),
 		},
 	}, nil
+}
+
+// SetDomain sets the primary domain (and port) of the HTTP server. This domain
+// is used to serve the AIA certificates.
+func (c *Intercept) SetDomain(domain string) {
+	c.domain = domain
 }
 
 // GetCertificate fetches a certificate from certificateStorage or issues a new one
@@ -232,10 +239,28 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+	}
 
-		// provide URL to intermediate certificate
-		// which can be downloaded by the client if missing
-		//IssuingCertificateURL: []string{"http://ca.bella.pm/intercept.crt"},
+	// If domain is set, add AIA extension to certificate to allow clients to
+	// download the intermediate certificate if missing.
+	if c.domain != "" {
+		template.IssuingCertificateURL = []string{"http://" + c.domain + "/intercept.crt"}
+	}
+
+	// Also if domain is set, add main domain to SANs
+	if c.domain != "" {
+		// Given domain might be a IPv4 or IPv6 address. If this is the case, it needs to be added to IPAddresses
+		if addr := net.ParseIP(c.domain); addr != nil {
+			template.IPAddresses = append(template.IPAddresses, addr)
+		} else {
+			// Domain might be a domain:port combination or just a domain. Split domain and port
+			domainParts := strings.Split(c.domain, ":")
+			if len(domainParts) > 1 {
+				template.DNSNames = append(template.DNSNames, domainParts[0])
+			} else {
+				template.DNSNames = append(template.DNSNames, c.domain)
+			}
+		}
 	}
 
 	// detect if given domain is an IP address

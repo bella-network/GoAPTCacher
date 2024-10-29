@@ -85,6 +85,11 @@ func main() {
 
 		log.Println("[INFO] HTTPS interception enabled")
 
+		// Set domain for certificate if configured
+		if len(config.Domains) > 0 {
+			intercept.SetDomain(config.Domains[0])
+		}
+
 		// Run periodic cleanup of expired certificates
 		go func() {
 			for {

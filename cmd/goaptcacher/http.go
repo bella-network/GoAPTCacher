@@ -233,5 +233,5 @@ func prettifyBytes(bytes uint64) string {
 		exp++
 	}
 
-	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
