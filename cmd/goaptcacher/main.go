@@ -108,6 +108,11 @@ func main() {
 
 	go ListenHTTP()
 
+	// If mDNS is enabled, announce the service
+	if config.mDNS {
+		go mDNSAnnouncement()
+	}
+
 	// Wait forever
 	select {}
 }

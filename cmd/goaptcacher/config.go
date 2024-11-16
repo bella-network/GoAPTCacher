@@ -39,6 +39,8 @@ type Config struct {
 		CertificatePassword   string `yaml:"password"` // Password for the private key file of the Intermediate CA or Root CA
 		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
+
+	mDNS bool `yaml:"mdns"` // Enable mDNS announcement for apt proxy auto-discovery
 }
 
 func ReadConfig(path string) (*Config, error) {

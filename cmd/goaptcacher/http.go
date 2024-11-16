@@ -268,10 +268,10 @@ Acquire::https::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + h
 		<br>
 		Assuming your internal domain is <strong>example.com</strong>, add the follwing DNS SRV record to your DNS server:<br>
 		<pre>
-_apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `</span>
+_apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `.</span>
 		</pre>
 
-		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy -v</code> on your system.
+		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy</code> on your system which should output the proxy server URL (e.g. <code>http://` + domain + `:` + httpPort + `</code>).
 	</p>
 	`
 
@@ -283,12 +283,12 @@ _apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 
 		<br>
 		For this feature to work, you need to configure your local DNS server to return the following SRV record for <strong>every single domain</strong> you want to use with this proxy server:<br>
 		<pre>
-_http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `</span>
+_http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `.</span>
 		</pre>
 
 		For HTTPS destinations like <strong>download.docker.com</strong>, you can use the following SRV record:<br>
 		<pre>
-_https._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpsPort + ` ` + domain + `</span>
+_https._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpsPort + ` ` + domain + `.</span>
 		</pre>
 	</p>
 	`
