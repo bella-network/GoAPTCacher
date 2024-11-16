@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	web "gitlab.com/bella.network/goaptcacher/lib/web"
@@ -78,8 +79,16 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 		// any additional functionality.
 		pageContent = `<h2>Welcome to GoAPTCacher</h2>
 		<p>
-
-
+			GoAPTCacher is a simple caching proxy server for APT based repositories.
+			It caches packages and metadata from upstream repositories to speed up package installations and updates on multiple systems.<br>
+			<br>
+			This page is shown to you because you have accessed the proxy server directly or with an invalid configuration.<br>
+			<br>
+			If you want to use this proxy server, please configure your APT client to use this server as a proxy. For more information, please check the <a href="/_goaptcacher/setup">setup page</a>.<br>
+			<br>
+			Detailed cache statistics and management are available on the <a href="/_goaptcacher/stats">stats page</a>.<br>
+			<br>
+			For more information about this project, please visit the <a href="https://gitlab.com/bella.network/goaptcacher">GitLab repository</a>.
 		</p>`
 		title = "GoAPTCacher"
 	case "stats":
@@ -214,7 +223,68 @@ func httpPageStats() string {
 // httpPageSetup returns the page content for the setup page containing the
 // configuration of this proxy server.
 func httpPageSetup() string {
+	// Determine domain to be used for configuration directives
+	var domain string
+	if len(config.Index.Hostnames) > 0 {
+		domain = config.Index.Hostnames[0]
+	} else {
+		// Detect IP address of this server and use it as domain
+		// TODO: Implement this
+	}
+
+	httpPort := strconv.Itoa(config.ListenPort)
+	httpsPort := strconv.Itoa(config.ListenPortSecure)
+
 	var response string
+	response += `<h2>Setup</h2>`
+	response += `<p>
+		This page shows the configuration of this proxy server. You can use this information to configure your APT client to use this proxy server.<br>
+		For configuration, there are multiple options available. Please choose the one that fits your needs.<br>
+	</p>`
+
+	// Configuration: Proxy Servers (HTTP and HTTPS)
+	response += `<h3>APT Proxy Directives</h3>`
+	response += `<p>
+		To use this proxy server with APT, you need to add the following lines to your APT configuration file (usually located at <code>/etc/apt/apt.conf.d/10proxy.conf</code>):<br>
+		<pre>
+Acquire::http::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
+Acquire::https::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
+		</pre>
+	</p>
+	`
+
+	// Configuration: APT Proxy Server Discovery
+	response += `<h3>APT Proxy Discovery</h3>`
+	response += `<p>
+		To use this proxy server with APT, you can also use the APT proxy discovery feature. This feature allows you to configure the proxy server once and let the APT client discover the proxy server automatically.<br>
+		To use this feature, you need to install the auto-apt-proxy package using <code>apt install <strong>auto-apt-proxy</strong></code> on your system.<br>
+		<br>
+		Assuming your internal domain is <strong>example.com</strong>, add the follwing DNS SRV record to your DNS server:<br>
+		<pre>
+_apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `</span>
+		</pre>
+
+		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy -v</code> on your system.
+	</p>
+	`
+
+	// Configuration: DNS SRV Record Override
+	response += `<h3>DNS SRV Override</h3>`
+	response += `<p>
+		To use this proxy server with APT, you can also use the DNS SRV record override feature. This feature allows you to override the destination of the APT requests by using a DNS SRV record.<br>
+		If the client does not support SRV record lookups, it will fall back to the default DNS resolution.<br>
+		<br>
+		For this feature to work, you need to configure your local DNS server to return the following SRV record for <strong>every single domain</strong> you want to use with this proxy server:<br>
+		<pre>
+_http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `</span>
+		</pre>
+
+		For HTTPS destinations like <strong>download.docker.com</strong>, you can use the following SRV record:<br>
+		<pre>
+_https._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpsPort + ` ` + domain + `</span>
+		</pre>
+	</p>
+	`
 
 	return response
 }
