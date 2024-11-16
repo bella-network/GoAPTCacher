@@ -27,6 +27,10 @@ div.container header {
 div.container header h1 {
 	margin: 0;
 }
+div.container header h1 a {
+	color: #fff;
+	text-decoration: none;
+}
 div.container header nav {
 	text-align: center;
 }
@@ -69,6 +73,10 @@ div.container main table tr:hover {
 }
 div.container main table caption {
 	font-weight: bold;
+}
+div.container main a {
+	color: #0073aa;
+	text-decoration: underline;
 }
 
 /* Footer */
