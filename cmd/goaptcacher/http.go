@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -229,7 +230,13 @@ func httpPageSetup() string {
 		domain = config.Index.Hostnames[0]
 	} else {
 		// Detect IP address of this server and use it as domain
-		// TODO: Implement this
+		ip, err := getLocalIP()
+		if err != nil || ip == "" {
+			log.Printf("[ERROR:WEB] Error getting local IP address: %s\n", err)
+			domain = "127.0.0.1"
+		} else {
+			domain = ip
+		}
 	}
 
 	httpPort := strconv.Itoa(config.ListenPort)
@@ -304,4 +311,23 @@ func prettifyBytes(bytes uint64) string {
 	}
 
 	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// getLocalIP is a helper function that returns the local IP address of the
+// server by checking all network interfaces. Loopback addresses are ignored.
+func getLocalIP() (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IP address found")
 }
