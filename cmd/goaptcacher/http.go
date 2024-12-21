@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	web "gitlab.com/bella.network/goaptcacher/lib/web"
 )
@@ -175,13 +176,30 @@ func httpPageStats() string {
 		entryList = append(entryList, entry)
 	}
 
+	// Get oldest date from the stats table
+	var oldestDate string
+	err = db.QueryRow("SELECT date FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
+	if err != nil {
+		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
+	}
+
+	var oldestDateParsed time.Time
+	if oldestDate != "" {
+		oldestDateParsed, err = time.Parse("2006-01-02", oldestDate)
+		if err != nil {
+			log.Printf("[ERROR:WEB] Error parsing date: %s\n", err)
+		}
+	}
+
 	response := `<h2>Cache statistics</h2>
 	<p>
 		This page shows the cache statistics of this proxy server including the total number of cached files, the total number of requests, hits, misses, and the total traffic served to clients and total traffic fetched from the repository upstream servers.
 		You can also see the last 14 days of traffic statistics in detail below.
 	</p>
 	<h3>Lifetime statistics</h3>
-	<p><ul>`
+	<p>
+		The following statistics are available since the first request made to this server which was on ` + oldestDateParsed.Format("2006-01-02") + `.
+	<ul>`
 	response += fmt.Sprintf("<li>Total files cached: %d</li>", filesCached)
 	response += fmt.Sprintf("<li>Total size cached: %s</li>", prettifyBytes(totalSize))
 	response += fmt.Sprintf("<li>Total requests: %d</li>", totalRequests)
@@ -297,7 +315,8 @@ _https._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SR
 }
 
 // prettifyBytes is a helper function that returns a human-readable string of
-// the given bytes.
+// the given bytes. It converts the bytes to the most appropriate unit (B, KiB,
+// MiB, GiB, TiB, PiB, EiB).
 func prettifyBytes(bytes uint64) string {
 	const unit = 1024
 	if bytes < unit {
