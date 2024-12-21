@@ -112,6 +112,8 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// proxyCONNECTStatus returns a HTTP response for a CONNECT request, with the
+// given status code and message.
 func proxyCONNECTStatus(code int, message string) []byte {
 	content := fmt.Sprintf("HTTP/1.1 %d %s\r\n\r\n", code, message)
 	return []byte(content)

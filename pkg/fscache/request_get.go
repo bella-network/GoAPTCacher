@@ -57,13 +57,9 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		}
 
 		// Direct cache hit, serve the file directly to the client and return.
-		uuid, err := c.accessCache.CreateFileLock(r.URL.Host, r.URL.Path)
-		if err != nil {
-			http.Error(w, "Error creating file lock", http.StatusInternalServerError)
-			return
-		}
+		c.accessCache.CreateFileLock(r.URL.Host, r.URL.Path)
 		// Remove the file lock
-		defer c.accessCache.RemoveFileLock(uuid)
+		defer c.accessCache.RemoveFileLock(r.URL.Host, r.URL.Path)
 
 		// Serve the file to the client
 		http.ServeFile(w, r, c.buildLocalPath(r.URL))

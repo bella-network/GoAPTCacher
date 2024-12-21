@@ -56,6 +56,11 @@ func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader, destN
 	defer wg.Done()
 	_, err := io.Copy(destination, source)
 	if err != nil {
-		fmt.Printf("[ERR:TUNNEL] Error during copy from %s to %s: %v\n", srcName, destName, err)
+		// Ignore broken pipe errors
+		if netErr, ok := err.(*net.OpError); ok && netErr.Err.Error() == "write: broken pipe" {
+			log.Printf("[INFO:TUNNEL] Connection closed: %s -> %s\n", srcName, destName)
+		} else {
+			fmt.Printf("[ERR:TUNNEL] Error during copy from %s to %s: %v\n", srcName, destName, err)
+		}
 	}
 }

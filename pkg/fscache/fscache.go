@@ -31,7 +31,6 @@ type FSCache struct {
 
 // NewFSCache creates a new FSCache with the given cache path.
 func NewFSCache(cachePath string) *FSCache {
-
 	cache, err := newAccessCache(cachePath + "/access_cache.db")
 	if err != nil {
 		log.Fatalf("Error creating access cache: %s\n", err)
@@ -70,7 +69,7 @@ func (c *FSCache) validateRequest(r *http.Request) error {
 	// Check if the used HTTP host is valid
 	if r.URL.Host == "" {
 		if r.Host == "" {
-			return fmt.Errorf("Invalid host")
+			return fmt.Errorf("invalid host")
 		} else {
 			r.URL.Host = r.Host
 		}
@@ -78,7 +77,7 @@ func (c *FSCache) validateRequest(r *http.Request) error {
 
 	// Check if the used HTTP Host is a valid domain
 	if !govalidator.IsDNSName(r.URL.Host) {
-		return fmt.Errorf("Invalid host")
+		return fmt.Errorf("invalid host")
 	}
 
 	return nil
