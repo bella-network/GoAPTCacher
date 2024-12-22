@@ -74,8 +74,11 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 	}
 
 	privateKey, err := x509.ParsePKCS8PrivateKey(privPem.Bytes)
+	// May be a PKCS1 private key
 	if err != nil {
-		return nil, err
+		if privateKey, err = x509.ParsePKCS1PrivateKey(privPem.Bytes); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
