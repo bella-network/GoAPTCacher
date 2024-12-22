@@ -40,7 +40,7 @@ type Config struct {
 		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
 
-	mDNS bool `yaml:"mdns"` // Enable mDNS announcement for apt proxy auto-discovery
+	MDNS bool `yaml:"mdns"` // Enable mDNS announcement for apt proxy auto-discovery
 
 	Expiration struct {
 		UnusedDays uint64 `yaml:"unused_days"` // Number of days after which unused cached files are deleted
