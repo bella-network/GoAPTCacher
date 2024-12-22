@@ -1,0 +1,44 @@
+project_name: goaptcacher
+
+builds:
+  - main: ./cmd/goaptcacher
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+changelog:
+  use: gitlab
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^refactor:'
+      - '^style:'
+      - '^ci:'
+      - '^perf:'
+      - '^build:'
+      - '^revert:'
+      - '^Merge pull request #'
+      - '^Merge branch '
+      - '^\[skip ci\]'
+  groups:
+    - title: "New Features"
+      regexp: '^.*?feat(ure)?(\([[:word:]]+\))??!?:.+$'
+      order: 100
+    - title: "Bug fixes"
+      regexp: '^.*?(bug(fix)?|fix|corrected)(\([[:word:]]+\))??!?:.+$'
+      order: 200
+    - title: Dependency updates
+      regexp: "^.*?dep(s|endency).*"
+      order: 300
+    - title: "Documentation updates"
+      regexp: "^.*?doc(s|umentation).*"
+      order: 400
+    - title: Other work
+      order: 9999
