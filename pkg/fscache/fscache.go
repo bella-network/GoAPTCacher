@@ -26,7 +26,8 @@ type FSCache struct {
 
 	CustomCachePath func(r *url.URL) string
 
-	accessCache *accessCache
+	accessCache      *accessCache
+	expirationInDays uint64
 }
 
 // NewFSCache creates a new FSCache with the given cache path.
@@ -46,6 +47,19 @@ func NewFSCache(cachePath string) *FSCache {
 		},
 		CachePath:   cachePath,
 		accessCache: cache,
+	}
+}
+
+// SetExpirationDays sets the expiration days for the cache, this will also
+// start the expiration ticker in the background.
+func (c *FSCache) SetExpirationDays(days uint64) {
+	firstSet := c.expirationInDays == 0
+
+	c.expirationInDays = days
+
+	if firstSet {
+		log.Printf("[INFO:EXPIRE] Activated file expiration\n")
+		go c.expireUnusedFiles()
 	}
 }
 

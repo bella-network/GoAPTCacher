@@ -102,6 +102,13 @@ func main() {
 	// Initiate cache
 	cache = fscache.NewFSCache(config.CacheDirectory)
 
+	// Set expiration days for the cache
+	if config.Expiration.UnusedDays > 0 {
+		cache.SetExpirationDays(config.Expiration.UnusedDays)
+	} else {
+		log.Println("[INFO] File expiration is disabled, old packages are not automatically deleted")
+	}
+
 	if config.HTTPS.Intercept {
 		go ListenHTTPS()
 	}

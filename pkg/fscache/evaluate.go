@@ -24,6 +24,7 @@ var ConnectedFiles = map[string][]string{
 	"Release.gpg": {"Release", "InRelease"},
 }
 
+// evaluateRefresh checks if the file should be refreshed.
 func (c *FSCache) evaluateRefresh(localFile *url.URL, lastAccess AccessEntry) bool {
 	// From localFile, get the filename only without the path
 	filename := filepath.Base(c.buildLocalPath(localFile))

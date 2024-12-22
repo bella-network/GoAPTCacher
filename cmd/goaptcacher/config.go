@@ -41,6 +41,10 @@ type Config struct {
 	} `yaml:"https"`
 
 	mDNS bool `yaml:"mdns"` // Enable mDNS announcement for apt proxy auto-discovery
+
+	Expiration struct {
+		UnusedDays uint64 `yaml:"unused_days"` // Number of days after which unused cached files are deleted
+	} `yaml:"expiration"`
 }
 
 func ReadConfig(path string) (*Config, error) {
