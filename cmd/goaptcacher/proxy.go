@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // handleRequest is the main handler function for incoming HTTP requests. It
@@ -44,6 +45,13 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		case "/_goaptcacher":
 			// Redirect to the index page.
 			http.Redirect(w, r, "/_goaptcacher/", http.StatusTemporaryRedirect)
+			return
+		case "/.well-known/security.txt":
+			// Serve a security.txt file.
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Contact: https://gitlab.com/bella.network/goaptcacher\n"))
+			w.Write([]byte("Expires: " + time.Now().AddDate(0, 0, 7).Format(time.RFC3339) + "\n"))
 			return
 		}
 	}
