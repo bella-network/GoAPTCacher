@@ -92,6 +92,56 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 			<br>
 			For more information about this project, please visit the <a href="https://gitlab.com/bella.network/goaptcacher">GitLab repository</a>.
 		</p>`
+
+		// Display which features are enabled, print warning if HTTPS interception is enabled
+		pageContent += `<h3>Features enabled</h3>
+		<p>
+			The following features are enabled on this proxy server:
+			<ul>
+				<li>HTTP Proxy: Enabled</li>`
+
+		if config.HTTPS.Intercept {
+			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted and cached)</li>`
+		} else if !config.HTTPS.Prevent {
+			pageContent += `<li>HTTPS Proxy: Enabled (Interception disabled, HTTPS traffic will be passed through)</li>`
+		} else {
+			pageContent += `<li>HTTPS Proxy: Disabled, HTTPS traffic will be blocked</li>`
+		}
+
+		pageContent += `<li>HTTP Port: ` + strconv.Itoa(config.ListenPort) + `</li>`
+		pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
+
+		// Display list of configured domains
+		pageContent += `<li>Configured domains (caching enabled): <ul>`
+		for _, domain := range config.Domains {
+			pageContent += "<li>" + domain + "</li>"
+		}
+		// Display list of passthrough domains
+		pageContent += `</ul></li><li>Passthrough domains (proxy without caching): <ul>`
+		for _, domain := range config.PassthroughDomains {
+			pageContent += "<li>" + domain + "</li>"
+		}
+
+		pageContent += `</ul></li>`
+
+		// Display list of remapped URLs
+		pageContent += `<li>Remapped URLs: <ul>`
+		for _, remap := range config.Remap {
+			pageContent += "<li>" + remap.From + " -> " + remap.To + "</li>"
+		}
+		pageContent += `</ul></li>`
+
+		// Display list of overrides
+		pageContent += `<li>Overrides: <ul>`
+		if config.Overrides.UbuntuServer != "" {
+			pageContent += "<li>Ubuntu Server: " + config.Overrides.UbuntuServer + "</li>"
+		}
+		if config.Overrides.DebianServer != "" {
+			pageContent += "<li>Debian Server: " + config.Overrides.DebianServer + "</li>"
+		}
+		pageContent += `</ul></li>`
+		pageContent += `</ul></p>`
+
 		title = "GoAPTCacher"
 	case "stats":
 		// Stats page contains the cache statistics of this proxy server.
