@@ -73,6 +73,7 @@ func main() {
 			log.Fatal("Error reading public key file: ", err)
 		}
 
+		// Initialize the HTTPS interception handler
 		intercept, err = httpsintercept.New(
 			publicKeyData,
 			privateKeyData,
@@ -109,10 +110,12 @@ func main() {
 		log.Println("[INFO] File expiration is disabled, old packages are not automatically deleted")
 	}
 
+	// If HTTPS interception is enabled, start the HTTPS listener
 	if config.HTTPS.Intercept {
 		go ListenHTTPS()
 	}
 
+	// Start the HTTP listener
 	go ListenHTTP()
 
 	// If mDNS is enabled, announce the service

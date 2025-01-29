@@ -101,7 +101,7 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 				<li>HTTP Proxy: Enabled</li>`
 
 		if config.HTTPS.Intercept {
-			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted and cached)</li>`
+			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted)</li>`
 		} else if !config.HTTPS.Prevent {
 			pageContent += `<li>HTTPS Proxy: Enabled (Interception disabled, HTTPS traffic will be passed through)</li>`
 		} else {
@@ -109,7 +109,10 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 		}
 
 		pageContent += `<li>HTTP Port: ` + strconv.Itoa(config.ListenPort) + `</li>`
-		pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
+
+		if config.HTTPS.Intercept {
+			pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
+		}
 
 		// Display list of configured domains
 		pageContent += `<li>Configured domains (caching enabled): <ul>`

@@ -101,12 +101,14 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		handleRequest(recorder, incomingRequest)
 
 		// Send the target server's response back to the client.
-		if err := recorder.Result().Write(tlsConn); err != nil {
+		response := recorder.Result()
+		if err := response.Write(tlsConn); err != nil {
 			log.Println("error writing response back:", err)
 		}
+		response.Body.Close()
 
 		// Close the connection if the client closed the connection
-		if recorder.Result().Close {
+		if response.Close {
 			break
 		}
 	}

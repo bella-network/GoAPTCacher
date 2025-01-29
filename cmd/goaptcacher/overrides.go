@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// checkOverrides checks if the request URL matches any of the remap entries and
+// overrides the destination host if necessary.
 func checkOverrides(r *http.Request) {
 	// Check if the request URL matches any of the remap entries
 	for _, remap := range config.Remap {

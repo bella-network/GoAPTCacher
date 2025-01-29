@@ -13,40 +13,43 @@ import (
 // handleTUNNEL tunnels the request to the target host without any caching or
 // interception. This is used for CONNECT requests and passthrough domains.
 func handleTUNNEL(w http.ResponseWriter, r *http.Request) {
-	// If in r.Host the port is not specified, append the default HTTP port. Do
-	// not simply check for ":" as a IPv6 address would also contain a colon.
-	// TODO: Check if this is really necessary
-
 	log.Printf("[INFO:TUNNEL:%s] Tunneling request to %s\n", r.RemoteAddr, r.Host)
 
-	dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+	// Connect to the target host
+	destConn, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	defer dest_conn.Close()
+	defer destConn.Close()
+
+	// Send a 200 OK response to the client, indicating that the tunnel is
+	// established. The client will then start sending data to the target host.
 	w.WriteHeader(http.StatusOK)
 
+	// Hijack the connection to the client so we can read/write data directly
+	// from/to the client. This allows us to tunnel data between the client and
+	// the target host.
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
 		return
 	}
-	src_conn, _, err := hj.Hijack()
+	srcConn, _, err := hj.Hijack()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer src_conn.Close()
+	defer srcConn.Close()
 
-	srcConnStr := fmt.Sprintf("%s->%s", src_conn.LocalAddr().String(), src_conn.RemoteAddr().String())
-	dstConnStr := fmt.Sprintf("%s->%s", dest_conn.LocalAddr().String(), dest_conn.RemoteAddr().String())
+	srcConnStr := fmt.Sprintf("%s->%s", srcConn.LocalAddr().String(), srcConn.RemoteAddr().String())
+	dstConnStr := fmt.Sprintf("%s->%s", destConn.LocalAddr().String(), destConn.RemoteAddr().String())
 
 	var wg sync.WaitGroup
 
 	wg.Add(2)
-	go transfer(&wg, dest_conn, src_conn, dstConnStr, srcConnStr)
-	go transfer(&wg, src_conn, dest_conn, srcConnStr, dstConnStr)
+	go transfer(&wg, destConn, srcConn, dstConnStr, srcConnStr)
+	go transfer(&wg, srcConn, destConn, srcConnStr, dstConnStr)
 	wg.Wait()
 }
 
