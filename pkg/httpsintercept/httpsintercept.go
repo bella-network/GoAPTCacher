@@ -19,10 +19,11 @@ import (
 )
 
 type Intercept struct {
-	publicKey  *x509.Certificate // Public key of the Intermediate CA or Root CA used to sign the fake certificates
-	privateKey *rsa.PrivateKey   // Private key of the Intermediate CA or Root CA used to sign the fake certificates
-	rootCA     *x509.Certificate // Root CA certificate to complete the chain of trust
-	domain     string            // Primary domain (and port) of the HTTP server. Used to serve AIA certificates.
+	publicKey    *x509.Certificate // Public key of the Intermediate CA or Root CA used to sign the fake certificates
+	privateKey   *rsa.PrivateKey   // Private key of the Intermediate CA or Root CA used to sign the fake certificates
+	privateKeyEC *ecdsa.PrivateKey // Private key of the Intermediate CA or Root CA used to sign the fake certificates
+	rootCA       *x509.Certificate // Root CA certificate to complete the chain of trust
+	domain       string            // Primary domain (and port) of the HTTP server. Used to serve AIA certificates.
 
 	// certificateStorage contains all issued certificates including rw lock
 	certStorage certificateStorage
@@ -81,12 +82,6 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 		}
 	}
 
-	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
-		return nil, ErrInvalidPrivateKey
-	}
-
-	rsaPrivateKey := privateKey.(*rsa.PrivateKey)
-
 	// Load the Root CA certificate
 	var rootCA *x509.Certificate
 	if newRootCAPublicKey != nil {
@@ -96,6 +91,25 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 			return nil, err
 		}
 	}
+
+	// If private key is an ECDSA key, parse into different variable
+	if _, ok := privateKey.(*ecdsa.PrivateKey); ok {
+		return &Intercept{
+			publicKey:    parsedPublicKey,
+			privateKeyEC: privateKey.(*ecdsa.PrivateKey),
+			rootCA:       rootCA,
+
+			certStorage: certificateStorage{
+				Certificates: make(map[string]IssuedCertificate),
+			},
+		}, nil
+	}
+
+	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
+		return nil, ErrInvalidPrivateKey
+	}
+
+	rsaPrivateKey := privateKey.(*rsa.PrivateKey)
 
 	return &Intercept{
 		publicKey:  parsedPublicKey,
@@ -281,8 +295,16 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		return nil, err
 	}
 
+	// Load correct private key
+	var privKey interface{}
+	if c.privateKeyEC != nil {
+		privKey = c.privateKeyEC
+	} else {
+		privKey = c.privateKey
+	}
+
 	// issue certificate
-	x, err := x509.CreateCertificate(rand.Reader, &template, c.publicKey, key.Public(), c.privateKey)
+	x, err := x509.CreateCertificate(rand.Reader, &template, c.publicKey, key.Public(), privKey)
 	if err != nil {
 		return nil, err
 	}
