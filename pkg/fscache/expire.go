@@ -19,16 +19,20 @@ func (c *FSCache) expireUnusedFiles() {
 		files, err := c.GetUnusedFiles(c.expirationInDays)
 		if err != nil {
 			log.Printf("[ERROR:EXPIRE] %s\n", err)
-			return
 		}
 
 		// Delete all files that have not been accessed for a long time
 		for _, file := range files {
-			c.DeleteFile(&file)
+			err := c.DeleteFile(&file)
+			if err != nil {
+				log.Printf("[ERROR:EXPIRE] %s\n", err)
+			}
 		}
 
+		log.Printf("[INFO:EXPIRE] File expiration finished\n")
+
 		// Sleep for a day
-		time.Sleep(time.Hour * 24)
+		time.Sleep(time.Hour * 12)
 	}
 }
 

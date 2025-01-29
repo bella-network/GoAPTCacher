@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,12 @@ import (
 func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	lastAccess, ok := c.accessCache.Get(r.URL.Host, r.URL.Path)
 	if ok {
+		// Remove the port from remote address if it is present
+		remoteAddr := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			remoteAddr = host
+		}
+
 		// Update last hit time for the file
 		c.accessCache.Hit(r.URL.Host, r.URL.Path)
 		c.accessCache.AddURLIfNotExists(r.URL.Host, r.URL.Path, r.URL.String())
@@ -50,7 +57,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			// Check if the file has been modified since the If-Modified-Since header
 			if lastAccess.RemoteLastModified.Before(parsedTime) {
 				w.WriteHeader(http.StatusNotModified)
-				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", r.RemoteAddr, r.URL.Host, r.URL.Path)
+				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", remoteAddr, r.URL.Host, r.URL.Path)
 				go c.accessCache.TrackRequest(true, 0)
 				return
 			}
@@ -64,7 +71,8 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		// Serve the file to the client
 		http.ServeFile(w, r, c.buildLocalPath(r.URL))
 
-		log.Printf("[INFO:GET:HIT:%s] %s\n", r.RemoteAddr, r.URL.String())
+		// Log the cache hit
+		log.Printf("[INFO:GET:HIT:%s] %s\n", remoteAddr, r.URL.String())
 		go c.accessCache.TrackRequest(true, lastAccess.Size)
 
 		return
