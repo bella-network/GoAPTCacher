@@ -208,3 +208,105 @@ func TestNewInvalidPrivateKey(t *testing.T) {
 		t.Fatalf("Expected error when creating Intercept with invalid private key")
 	}
 }
+
+// generateEncryptedTestKeys generates a new RSA private key and self-signed certificate, and encrypts the private key
+func generateEncryptedTestKeys(password string) ([]byte, []byte, error) {
+	// Generate a new RSA private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Encrypt the private key
+	privKeyPEMBlock, err := x509.EncryptPEMBlock(rand.Reader, "ENCRYPTED PRIVATE KEY", x509.MarshalPKCS1PrivateKey(privateKey), []byte(password), x509.PEMCipherAES256)
+	if err != nil {
+		return nil, nil, err
+	}
+	privKeyPEM := pem.EncodeToMemory(privKeyPEMBlock)
+
+	return privKeyPEM, nil, nil
+}
+
+// TestParsePrivateKey tests the parsePrivateKey function
+func TestParsePrivateKey(t *testing.T) {
+	// Generate test keys
+	privKeyPEM, _, err := generateEncryptedTestKeys("password")
+	if err != nil {
+		t.Fatalf("Failed to generate test keys: %v", err)
+	}
+
+	// Test parsing the private key
+	privateKey, err := parsePrivateKey(privKeyPEM, "password")
+	if err != nil {
+		t.Fatalf("Failed to parse private key: %v", err)
+	}
+
+	if privateKey == nil {
+		t.Fatalf("Expected private key, got nil")
+	}
+}
+
+// TestParsePrivateKeyInvalid tests the parsePrivateKey function with an invalid private key
+func TestParsePrivateKeyInvalid(t *testing.T) {
+	_, err := parsePrivateKey([]byte("invalid private key"), "password")
+	if err == nil {
+		t.Fatalf("Expected error when parsing invalid private key")
+	}
+}
+
+// TestParsePrivateKeyWrongPassword tests the parsePrivateKey function with a wrong password
+func TestParsePrivateKeyWrongPassword(t *testing.T) {
+	// Generate test keys
+	privKeyPEM, _, err := generateEncryptedTestKeys("password")
+	if err != nil {
+		t.Fatalf("Failed to generate test keys: %v", err)
+	}
+
+	// Test parsing the private key with a wrong password
+	_, err = parsePrivateKey(privKeyPEM, "wrongpassword")
+	if err == nil {
+		t.Fatalf("Expected error when parsing private key with wrong password")
+	}
+}
+
+// generateEncryptedECDSATestKeys generates a new ECDSA private key and self-signed certificate, and encrypts the private key
+func generateEncryptedECDSATestKeys(password string) ([]byte, error) {
+	// Generate a new ECDSA private key
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	eckey, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encrypt the private key
+	privKeyPEMBlock, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", eckey, []byte(password), x509.PEMCipherAES256)
+	if err != nil {
+		return nil, err
+	}
+	privKeyPEM := pem.EncodeToMemory(privKeyPEMBlock)
+
+	return privKeyPEM, nil
+}
+
+// TestParseECDSAPrivateKey tests the parsePrivateKey function with an ECDSA private key
+func TestParseECDSAPrivateKey(t *testing.T) {
+	// Generate test keys
+	privKeyPEM, err := generateEncryptedECDSATestKeys("password")
+	if err != nil {
+		t.Fatalf("Failed to generate test keys: %v", err)
+	}
+
+	// Test parsing the private key
+	privateKey, err := parsePrivateKey(privKeyPEM, "password")
+	if err != nil {
+		t.Fatalf("Failed to parse private key: %v", err)
+	}
+
+	if privateKey == nil {
+		t.Fatalf("Expected private key, got nil")
+	}
+}
