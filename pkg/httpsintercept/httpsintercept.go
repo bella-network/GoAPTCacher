@@ -78,7 +78,10 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 	// May be a PKCS1 private key
 	if err != nil {
 		if privateKey, err = x509.ParsePKCS1PrivateKey(privPem.Bytes); err != nil {
-			return nil, err
+			// May be an ECDSA private key
+			if privateKey, err = x509.ParseECPrivateKey(privPem.Bytes); err != nil {
+				return nil, err
+			}
 		}
 	}
 
