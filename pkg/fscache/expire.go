@@ -31,6 +31,9 @@ func (c *FSCache) expireUnusedFiles() {
 
 		log.Printf("[INFO:EXPIRE] File expiration finished\n")
 
+		c.accessCache.db.Exec("VACUUM")
+		log.Printf("[INFO:EXPIRE] Database vacuumed\n")
+
 		// Sleep for a day
 		time.Sleep(time.Hour * 12)
 	}
