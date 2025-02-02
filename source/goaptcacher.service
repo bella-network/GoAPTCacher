@@ -1,0 +1,13 @@
+[Unit]
+Description=GoAPTCacher pass-through apt proxy server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/goaptcacher
+WorkingDirectory=/etc/goaptcacher
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
