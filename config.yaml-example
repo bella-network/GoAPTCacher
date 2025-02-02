@@ -1,0 +1,45 @@
+cache_directory: "/cache"
+
+domains:
+  - "archive.ubuntu.com" # Ubuntu archive
+  - "security.ubuntu.com" # Ubuntu security
+  - "ports.ubuntu.com" # Ubuntu ports
+  - "esm.ubuntu.com" # Ubuntu ESM
+  - "motd.ubuntu.com" # Ubuntu MOTD
+
+  - "security.debian.org" # Debian security
+  - ".debian.org" # Debian archive
+
+  - "download.proxmox.com" # Proxmox VE
+
+  - "packages.microsoft.com" # Microsoft packages (e.g. Visual Studio Code)
+  - "download.docker.com" # Docker packages
+
+  - "ppa.launchpad.net" # Ubuntu PPAs
+  - "ppa.launchpadcontent.net" # Ubuntu PPAs (content, redirect from ppa.launchpad.net)
+
+  - "raspbian.raspberrypi.org" # Raspbian
+  - "archive.raspberrypi.org" # Raspbian archive
+
+passthrough_domains:
+  - "esm.ubuntu.com" # Ubuntu ESM (authentication required)
+  - "enterprise.proxmox.com" # Proxmox VE with subscription (authentication required)
+
+https:
+  intercept: false
+  cert: "/config/public.key"
+  key: "/config/private.key"
+  password: "my-password"
+
+remap:
+  - from: "ubuntu.lagis.at"
+    to: "archive.ubuntu.com"
+
+overrides:
+  ubuntu_server: "archive.ubuntu.com"
+  debian_server: "archive.debian.org"
+
+index:
+  enable: true
+  hostnames:
+    - "myhostname"

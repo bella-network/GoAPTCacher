@@ -1,3 +1,4 @@
+version: 2
 project_name: goaptcacher
 
 builds:
@@ -42,3 +43,53 @@ changelog:
       order: 400
     - title: Other work
       order: 9999
+
+dockers:
+  - image_templates:
+      - "registry.gitlab.com/bella.network/goaptcacher:{{ .Version }}"
+      - "registry.gitlab.com/bella.network/goaptcacher:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--pull"
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url=https://gitlab.com/bella.network/goaptcacher
+      - --label=org.opencontainers.image.source=https://gitlab.com/bella.network/goaptcacher
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=MIT
+    extra_files:
+      - config.yaml-example
+
+nfpms:
+  - id: goaptcacher
+    maintainer: Thomas Bella <thomas@bella.network>
+    description: GoAPTcacher is a pull-through cache for APT packages.
+    homepage: https://gitlab.com/bella.network/goaptcacher
+    license: MIT
+
+    formats:
+      - deb
+
+    bindir: /usr/bin
+
+    contents:
+      - src: source/goaptcacher.service
+        dst: /lib/systemd/system/goaptcacher.service
+      - src: config.yaml-example
+        dst: /etc/goaptcacher/config.yaml
+
+    deb:
+      fields:
+        Bugs: https://gitlab.com/bella.network/goaptcacher/issues
+
+    scripts:
+      postinstall: "source/postinst.sh"
+      preremove: "source/prerm.sh"
+      postremove: "source/postrm.sh"
+
+gitlab_urls:
+  use_package_registry: true
+
+report_sizes: true
