@@ -1,7 +1,6 @@
 package fscache
 
 import (
-	"bytes"
 	"io"
 	"log"
 	"net"
@@ -182,16 +181,6 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		w.Header().Set("ETag", eTag)
 	}
 
-	// Body needs to be read 2 times, once to stream to the client and once to write to the cache
-	var buf bytes.Buffer
-	tee := io.TeeReader(resp.Body, &buf)
-	_, err = io.Copy(w, tee)
-	if err != nil {
-		http.Error(w, "Error streaming file", http.StatusInternalServerError)
-		log.Printf("Error streaming file: %v\n", err)
-		return
-	}
-
 	// Create the cache directory if it does not exist
 	err = os.MkdirAll(filepath.Dir(c.buildLocalPath(r.URL)), 0755)
 	if err != nil {
@@ -207,8 +196,11 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	}
 	defer file.Close()
 
+	// Use io.MultiWriter to write to both the file and the response writer
+	multiWriter := io.MultiWriter(w, file)
+
 	// Write the file to the cache
-	bw, err := io.Copy(file, &buf)
+	bw, err := io.Copy(multiWriter, resp.Body)
 	if err != nil {
 		log.Printf("Error writing file: %v\n", err)
 		return
