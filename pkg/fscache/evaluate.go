@@ -89,6 +89,10 @@ func (c *FSCache) cacheRefesh(localFile *url.URL, lastAccess AccessEntry) {
 	}
 }
 
+// refreshFile checks if the file has changed and downloads the new file if
+// necessary. The function returns true if the file has changed and false if the
+// file has not changed. An error is returned if an error occurred during the
+// download.
 func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAccess AccessEntry) (bool, error) {
 	// Perform a GET request to the server to check if the file has changed. If
 	// possible, use the ETag or Last-Modified header. If the file has changed,
@@ -199,6 +203,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 
 	// Update the access cache with the new file
 	c.accessCache.UpdateFile(localFile.Host, localFile.Path, lastAccess.URL, lastModified, etag, wrb)
+	go c.accessCache.TrackRequest(false, lastAccess.Size)
 
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 

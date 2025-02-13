@@ -12,6 +12,7 @@ import (
 
 // serveGETRequest is the basic function to serve a GET request for a client.
 func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
+	// Check the access cache for the requested file
 	lastAccess, ok := c.accessCache.Get(r.URL.Host, r.URL.Path)
 	if ok {
 		// Remove the port from remote address if it is present
