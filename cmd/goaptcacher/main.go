@@ -28,7 +28,7 @@ func main() {
 	// Check if envorinment variable is set with the path to the config file
 	configPath := os.Getenv("CONFIG")
 	if configPath == "" {
-		configPath = "../../config.yaml"
+		configPath = "./config.yaml"
 	}
 
 	// Read the config file

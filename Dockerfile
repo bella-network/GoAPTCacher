@@ -27,7 +27,7 @@ USER goaptcacher:goaptcacher
 EXPOSE 8090
 EXPOSE 8091
 
-VOLUME [ "/cache", "/config" ]
+VOLUME [ "/var/cache/goaptcacher", "/config" ]
 WORKDIR /config
 
 CMD ["/goaptcacher"]
