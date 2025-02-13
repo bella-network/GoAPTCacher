@@ -1,4 +1,4 @@
-cache_directory: "/cache"
+cache_directory: "/var/cache/goaptcacher"
 
 domains:
   - "archive.ubuntu.com" # Ubuntu archive

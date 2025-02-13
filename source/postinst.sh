@@ -1,6 +1,22 @@
 #!/bin/sh
 # postinst script
 
+case "$1" in
+	configure)
+		if ! id "goaptcacher" &>/dev/null; then
+			useradd --system --no-create-home --shell /bin/false goaptcacher
+			echo "User goaptcacher created."
+		else
+			echo "User goaptcacher already exists."
+		fi
+
+		# Create the cache directory and set ownership
+		mkdir -p /var/cache/goaptcacher
+		chown goaptcacher:goaptcacher /var/cache/goaptcacher
+		echo "Cache directory /var/cache/goaptcacher created and ownership set to goaptcacher."
+		;;
+esac
+
 if [ "$1" = "triggered" ]; then
 	invoke-rc.d goaptcacher.service restart
 fi

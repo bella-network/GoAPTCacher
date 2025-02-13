@@ -4,10 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
+Environment="CONFIG=/etc/goaptcacher/config.yaml"
 ExecStart=/usr/bin/goaptcacher
 WorkingDirectory=/etc/goaptcacher
 Restart=always
 RestartSec=10s
+User=goaptcacher
+Group=goaptcacher
 
 [Install]
 WantedBy=multi-user.target

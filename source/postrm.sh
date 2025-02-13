@@ -19,6 +19,21 @@ set -e
 # for details, see http://www.debian.org/doc/debian-policy/ or
 # the debian-policy package
 
+case "$1" in
+  remove)
+    if id "goaptcacher" &>/dev/null; then
+      userdel goaptcacher
+      echo "User goaptcacher removed."
+    else
+      echo "User goaptcacher does not exist."
+    fi
+    ;;
+
+  purge)
+    # Remove the cache directory
+    rm -rf /var/cache/goaptcacher
+esac
+
 # Reload systemd
 systemctl daemon-reload || :
 
