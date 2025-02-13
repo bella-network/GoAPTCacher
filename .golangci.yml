@@ -6,12 +6,11 @@ linters-settings:
 linters:
   enable:
     - bodyclose
+    - copyloopvar
     - errcheck
     - exhaustive
-    - exportloopref
     - gocritic
     - goimports
-    - revive
     - gomodguard
     - gosec
     - gosimple
@@ -21,6 +20,7 @@ linters:
     - makezero
     - misspell
     - prealloc
+    - revive
     - rowserrcheck
     - staticcheck
     - typecheck
