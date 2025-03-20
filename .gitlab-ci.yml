@@ -94,4 +94,5 @@ release:
     # generate a changelog.
     GIT_DEPTH: 0
   script:
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - goreleaser release --clean
