@@ -170,3 +170,14 @@ func migrateDatabase(db *sql.DB) error {
 
 	return nil
 }
+
+// GC runs garbage collection on the database by removing old entries from the
+// database and executing VACUUM.
+func GC(db *sql.DB) error {
+	// Execute VACUUM to clean the database.
+	if _, err := db.Exec("VACUUM"); err != nil {
+		return err
+	}
+
+	return nil
+}
