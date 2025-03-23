@@ -197,8 +197,8 @@ func httpPageStats() string {
 	}
 
 	// Get total cache statistics
-	var totalRequests, totalHits, totalMisses, totalTrafficUp, totalTrafficDown uint64
-	err = db.QueryRow("SELECT SUM(requests), SUM(hits), SUM(misses), SUM(traffic_down), SUM(traffic_up) FROM stats").Scan(&totalRequests, &totalHits, &totalMisses, &totalTrafficDown, &totalTrafficUp)
+	var totalRequests, totalHits, totalMisses, totalTrafficUp, totalTrafficDown, totalTunnel uint64
+	err = db.QueryRow("SELECT SUM(requests), SUM(hits), SUM(misses), SUM(tunnel), SUM(traffic_down), SUM(traffic_up) FROM stats").Scan(&totalRequests, &totalHits, &totalMisses, &totalTunnel, &totalTrafficDown, &totalTrafficUp)
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
@@ -209,11 +209,12 @@ func httpPageStats() string {
 		Requests    uint64
 		Hits        uint64
 		Misses      uint64
+		Tunnel      uint64
 		TrafficUp   uint64
 		TrafficDown uint64
 	}
 	var entryList []statsEntry
-	rows, err := db.Query("SELECT date, requests, hits, misses, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
+	rows, err := db.Query("SELECT date, requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
@@ -221,7 +222,7 @@ func httpPageStats() string {
 
 	for rows.Next() {
 		var entry statsEntry
-		err = rows.Scan(&entry.Date, &entry.Requests, &entry.Hits, &entry.Misses, &entry.TrafficDown, &entry.TrafficUp)
+		err = rows.Scan(&entry.Date, &entry.Requests, &entry.Hits, &entry.Misses, &entry.Tunnel, &entry.TrafficDown, &entry.TrafficUp)
 		if err != nil {
 			log.Printf("[ERROR:WEB] Error scanning database row: %s\n", err)
 		}
@@ -258,6 +259,7 @@ func httpPageStats() string {
 	response += fmt.Sprintf("<li>Total requests: %d</li>", totalRequests)
 	response += fmt.Sprintf("<li>Total hits: %d (%d%%)</li>", totalHits, 100*totalHits/totalRequests)
 	response += fmt.Sprintf("<li>Total misses: %d (%d%%)</li>", totalMisses, 100*totalMisses/totalRequests)
+	response += fmt.Sprintf("<li>Total tunnel requests: %d</li>", totalTunnel)
 	response += fmt.Sprintf("<li>Total traffic served to clients: %s</li>", prettifyBytes(totalTrafficUp))
 	response += fmt.Sprintf("<li>Total traffic fetched from repo servers: %s</li>", prettifyBytes(totalTrafficDown))
 	response += `</ul></p>
@@ -269,18 +271,20 @@ func httpPageStats() string {
 				<th>Requests</th>
 				<th>Hits</th>
 				<th>Misses</th>
+				<th>Tunnel</th>
 				<th>Traffic served</th>
 				<th>Traffic fetched</th>
 			</tr>`
 	for _, entry := range entryList {
 		response += fmt.Sprintf(
-			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%s</td><td>%s (%d%%)</td></tr>",
+			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d</td><td>%s</td><td>%s (%d%%)</td></tr>",
 			entry.Date,
 			entry.Requests,
 			entry.Hits,
 			100*entry.Hits/entry.Requests,
 			entry.Misses,
 			100*entry.Misses/entry.Requests,
+			entry.Tunnel,
 			prettifyBytes(entry.TrafficUp),
 			prettifyBytes(entry.TrafficDown),
 			100*entry.TrafficDown/entry.TrafficUp,

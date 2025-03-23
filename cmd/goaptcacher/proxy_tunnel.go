@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"gitlab.com/bella.network/goaptcacher/lib/cdb"
 )
 
 // handleTUNNEL tunnels the request to the target host without any caching or
@@ -48,16 +50,27 @@ func handleTUNNEL(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	wg.Add(2)
-	go transfer(&wg, destConn, srcConn, dstConnStr, srcConnStr)
-	go transfer(&wg, srcConn, destConn, srcConnStr, dstConnStr)
+	var sizeIn, sizeOut int64
+	go func(size *int64) {
+		*size = transfer(&wg, destConn, srcConn, dstConnStr, srcConnStr)
+	}(&sizeOut)
+	go func(size *int64) {
+		*size = transfer(&wg, srcConn, destConn, srcConnStr, dstConnStr)
+	}(&sizeIn)
+
 	wg.Wait()
+
+	// Log transfer statistics
+	go func(download int64) {
+		cdb.TrackTunnelRequest(cache.GetDatabaseConnection(), download)
+	}(sizeIn + sizeOut)
 }
 
 // transfer copies data from source to destination and logs any errors that
 // occur. It is used to tunnel data between the client and the target host.
-func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader, destName, srcName string) {
+func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader, destName, srcName string) int64 {
 	defer wg.Done()
-	_, err := io.Copy(destination, source)
+	transferSize, err := io.Copy(destination, source)
 	if err != nil {
 		// Ignore broken pipe errors
 		if netErr, ok := err.(*net.OpError); ok && netErr.Err.Error() == "write: broken pipe" {
@@ -66,4 +79,18 @@ func transfer(wg *sync.WaitGroup, destination io.Writer, source io.Reader, destN
 			fmt.Printf("[ERR:TUNNEL] Error during copy from %s to %s: %v\n", srcName, destName, err)
 		}
 	}
+
+	log.Printf("[INFO:TUNNEL] Transferred %d bytes from %s to %s\n", transferSize, srcName, destName)
+
+	// Close the destination connection to signal that we're done
+	if closer, ok := destination.(io.Closer); ok {
+		closer.Close()
+	}
+
+	// Close the source connection to signal that we're done
+	if closer, ok := source.(io.Closer); ok {
+		closer.Close()
+	}
+
+	return transferSize
 }

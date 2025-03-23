@@ -153,7 +153,6 @@ func migrateDatabase(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	var version int
 	if rows.Next() {
@@ -163,10 +162,29 @@ func migrateDatabase(db *sql.DB) error {
 		}
 	}
 
+	rows.Close()
+
 	log.Printf("[DB:MIGRATE] Current schema version: %d\n", version)
 
 	// Migrate database to the latest schema version.
-	// NOTING TO DO AS NO NEW SCHEMA VERSIONS ARE AVAILABLE.
+	if version < 2 {
+		log.Printf("[DB:MIGRATE:START] Migrating to schema version 2\n")
+
+		// Migrate to schema version 2.
+		if _, err := db.Exec(`ALTER TABLE stats ADD COLUMN tunnel INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`ALTER TABLE stats ADD COLUMN tunnel_transfer INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+
+		// Update schema version in the database.
+		if _, err := db.Exec(`UPDATE keyvalue SET value = '2' WHERE key = 'schema_version'`); err != nil {
+			return err
+		}
+
+		log.Printf("[DB:MIGRATE:END] Migrated to schema version 2\n")
+	}
 
 	return nil
 }
