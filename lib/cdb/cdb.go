@@ -189,6 +189,22 @@ func migrateDatabase(db *sql.DB) error {
 	return nil
 }
 
+// StartupCleanup performs cleanup tasks on startup, such as deleting old write
+// locks and marked files.
+func StartupCleanup(db *sql.DB) error {
+	// Delete old write locks.
+	if _, err := db.Exec("DELETE FROM file_lock WHERE lock_time < strftime('%s', 'now', '-1 hour')"); err != nil {
+		return err
+	}
+
+	// Delete old marked files.
+	if _, err := db.Exec("DELETE FROM write_lock"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // GC runs garbage collection on the database by removing old entries from the
 // database and executing VACUUM.
 func GC(db *sql.DB) error {

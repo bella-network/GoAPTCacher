@@ -42,6 +42,11 @@ func newAccessCache(file string) (*accessCache, error) {
 		return nil, err
 	}
 
+	// Perform cleanup tasks (e.g. hanging write locks)
+	if err := cdb.StartupCleanup(conn); err != nil {
+		return nil, err
+	}
+
 	return &accessCache{
 		db:                 conn,
 		memoryFileReadLock: make(map[string]time.Time),
@@ -62,9 +67,17 @@ func (ac *accessCache) Get(domain, path string) (AccessEntry, bool) {
 	)
 
 	var entry AccessEntry
-	err := row.Scan(&entry.LastAccessed, &entry.LastChecked, &entry.RemoteLastModified, &entry.ETag, &entry.Size, &entry.URL)
+	var lastAccessed, lastChecked, remoteLastModified string
+	err := row.Scan(&lastAccessed, &lastChecked, &remoteLastModified, &entry.ETag, &entry.Size, &entry.URL)
 	if err != nil {
 		return AccessEntry{}, false
+	}
+
+	entry.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
+	entry.LastChecked, _ = time.Parse(time.RFC3339, lastChecked)
+	entry.RemoteLastModified, _ = time.Parse(time.RFC3339, remoteLastModified)
+	if entry.RemoteLastModified.IsZero() {
+		entry.RemoteLastModified = entry.LastAccessed
 	}
 
 	return entry, true
