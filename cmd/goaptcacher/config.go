@@ -61,6 +61,12 @@ func ReadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Cache directory may be set by environment variable, e.g for Docker,
+	// development, etc.
+	if cacheDir := os.Getenv("CACHE_DIR"); cacheDir != "" {
+		config.CacheDirectory = cacheDir
+	}
+
 	// Set default cache directory if not set
 	if config.CacheDirectory == "" {
 		config.CacheDirectory = "./cache"

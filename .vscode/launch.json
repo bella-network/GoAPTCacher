@@ -8,7 +8,8 @@
 			"mode": "auto",
 			"program": "${workspaceRoot}/cmd/goaptcacher/",
 			"env": {
-				"CONFIG": "${workspaceRoot}/config.yaml"
+				"CONFIG": "${workspaceRoot}/config.yaml",
+				"CACHE_DIR": "${workspaceRoot}/cache"
 			},
 			"args": []
 		}
