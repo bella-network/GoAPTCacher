@@ -174,7 +174,12 @@ func (c *FSCache) getFilesInCacheDirectory() ([]string, error) {
 			return nil
 		}
 
-		files = append(files, path)
+		rel, err := filepath.Rel(c.CachePath, path)
+		if err != nil {
+			return err
+		}
+
+		files = append(files, rel)
 		return nil
 	})
 	if err != nil {

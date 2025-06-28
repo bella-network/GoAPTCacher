@@ -204,6 +204,13 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	bw, err := io.Copy(multiWriter, resp.Body)
 	if err != nil {
 		log.Printf("Error writing file: %v\n", err)
+		os.Remove(c.buildLocalPath(r.URL))
+		return
+	}
+
+	if resp.ContentLength > 0 && resp.ContentLength != bw {
+		log.Printf("Error writing file: expected %d bytes, got %d\n", resp.ContentLength, bw)
+		os.Remove(c.buildLocalPath(r.URL))
 		return
 	}
 

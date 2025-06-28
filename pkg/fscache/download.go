@@ -1,6 +1,7 @@
 package fscache
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -33,9 +34,15 @@ func (c *FSCache) downloadFileSimple(url string, localPath string) error {
 	defer file.Close()
 
 	// Write the file
-	_, err = io.Copy(file, resp.Body)
+	bw, err := io.Copy(file, resp.Body)
 	if err != nil {
+		os.Remove(localPath)
 		return err
+	}
+
+	if resp.ContentLength > 0 && resp.ContentLength != bw {
+		os.Remove(localPath)
+		return fmt.Errorf("download incomplete: expected %d bytes, got %d", resp.ContentLength, bw)
 	}
 
 	return nil
