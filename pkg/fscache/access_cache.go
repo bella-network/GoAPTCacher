@@ -2,6 +2,7 @@ package fscache
 
 import (
 	"database/sql"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -227,7 +228,10 @@ func (ac *accessCache) CreateExclusiveWriteLock(domain, path string) bool {
 
 // MarkForDeletion marks the given domain and path for deletion.
 func (ac *accessCache) MarkForDeletion(domain, path string) {
-	_, _ = ac.db.Exec("INSERT INTO marked_files (domain, path, mark_time) VALUES (?, ?, ?)", domain, path, time.Now().Unix())
+	_, err := ac.db.Exec("INSERT INTO marked_files (domain, path, mark_time) VALUES (?, ?, ?)", domain, path, time.Now().Unix())
+	if err != nil {
+		log.Printf("[ERROR] Failed to mark file for deletion: %v", err)
+	}
 }
 
 // TrackRequest tracks a request in the database.

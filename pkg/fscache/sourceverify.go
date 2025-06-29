@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,10 +25,12 @@ func (c *FSCache) StartSourcesVerification() {
 
 func (c *FSCache) runSourcesVerification() {
 	// initial delay
-	time.Sleep(time.Minute)
+	time.Sleep(time.Second * 5)
 	for {
 		if err := c.verifySources(); err != nil {
 			log.Printf("[ERROR:VERIFY] %v", err)
+		} else {
+			log.Printf("[INFO:VERIFY] Source verification completed successfully")
 		}
 		time.Sleep(12 * time.Hour)
 	}
@@ -35,7 +39,7 @@ func (c *FSCache) runSourcesVerification() {
 // verifySources performs a single verification run.
 func (c *FSCache) verifySources() error {
 	db := c.accessCache.GetDatabaseConnection()
-	rows, err := db.Query("SELECT domain, path, url FROM access_cache WHERE path LIKE '/dists/%/InRelease'")
+	rows, err := db.Query("SELECT domain, path, url FROM access_cache WHERE path LIKE '%/InRelease'")
 	if err != nil {
 		return err
 	}
@@ -62,16 +66,27 @@ func (c *FSCache) verifySources() error {
 			continue
 		}
 		base := strings.TrimSuffix(r.url, "InRelease")
+		domain := r.domain
 		for _, sum := range sums {
 			if strings.HasSuffix(sum.file, "Packages") || strings.HasSuffix(sum.file, "Packages.gz") {
-				url := base + sum.file
-				pkgs, err := fetchPackagesIndex(c.client, url)
+				newUrl := base + sum.file
+				pkgs, err := fetchPackagesIndex(c.client, newUrl)
 				if err != nil {
-					log.Printf("[WARN:VERIFY] failed to fetch packages %s: %v", url, err)
+					log.Printf("[WARN:VERIFY] failed to fetch packages %s: %v", newUrl, err)
 					continue
 				}
+
+				base2, err := url.Parse(base + "../../")
+				if err != nil {
+					log.Printf("[WARN:VERIFY] failed to parse base URL %s: %v", base, err)
+					continue
+				}
+
+				// Resolve the URL references to get the correct domain
+				base3 := base2.ResolveReference(&url.URL{Path: base2.Path})
+
 				for p, h := range pkgs {
-					packagesChecksums["/"+p] = h
+					packagesChecksums[domain+base3.Path+p] = h
 				}
 			}
 		}
@@ -88,8 +103,9 @@ func (c *FSCache) verifySources() error {
 		if err := rows2.Scan(&domain, &path); err != nil {
 			continue
 		}
-		expected, ok := packagesChecksums[strings.TrimPrefix(path, "/")] // database paths start with /
+		expected, ok := packagesChecksums[domain+path]
 		if !ok {
+			log.Printf("[INFO:VERIFY] %s%s not found in packages index, marking for deletion", domain, path)
 			c.accessCache.MarkForDeletion(domain, path)
 			continue
 		}
@@ -99,6 +115,7 @@ func (c *FSCache) verifySources() error {
 			continue
 		}
 		if h != expected {
+			log.Printf("[INFO:VERIFY] %s%s checksum mismatch: expected %s, got %s, marking for deletion", domain, path, expected, h)
 			c.accessCache.MarkForDeletion(domain, path)
 		}
 	}
@@ -134,10 +151,16 @@ func fetchReleaseSHA256(client *http.Client, u string) ([]shaFile, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("failed to fetch release SHA256: " + resp.Status)
+	}
+
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+
 	return parseReleaseSHA256(string(data)), nil
 }
 
@@ -173,6 +196,11 @@ func fetchPackagesIndex(client *http.Client, u string) (map[string]string, error
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("failed to fetch packages index: " + resp.Status)
+	}
+
 	var reader io.Reader = resp.Body
 	if strings.HasSuffix(u, ".gz") {
 		gz, err := gzip.NewReader(resp.Body)
@@ -191,10 +219,10 @@ func parsePackages(r io.Reader) map[string]string {
 	var filename, sha string
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "Filename:") {
-			filename = strings.TrimSpace(strings.TrimPrefix(line, "Filename:"))
-		} else if strings.HasPrefix(line, "SHA256:") {
-			sha = strings.TrimSpace(strings.TrimPrefix(line, "SHA256:"))
+		if after, ok := strings.CutPrefix(line, "Filename:"); ok {
+			filename = strings.TrimSpace(after)
+		} else if after0, ok0 := strings.CutPrefix(line, "SHA256:"); ok0 {
+			sha = strings.TrimSpace(after0)
 		} else if line == "" {
 			if filename != "" && sha != "" {
 				pkgSums[filename] = sha
