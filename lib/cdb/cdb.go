@@ -20,12 +20,12 @@ func OpenEmbed(name string) (*sql.DB, error) {
 
 // OpenMemory opens a connection to an in-memory SQLite database.
 func OpenMemory() (*sql.DB, error) {
-	return sql.Open("sqlite3", ":memory:")
+	return sql.Open("sqlite3", ":memory:?cache=shared&_journal_mode=WAL&_sync=normal&_busy_timeout=5000")
 }
 
 // OpenTemp opens a connection to a temporary SQLite database.
 func OpenFile(name string) (*sql.DB, error) {
-	return sql.Open("sqlite3", "file:"+name)
+	return sql.Open("sqlite3", "file:"+name+"?cache=shared&_journal_mode=WAL&_sync=normal&_busy_timeout=5000")
 }
 
 // Close closes the database connection.
