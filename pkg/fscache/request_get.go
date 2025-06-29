@@ -189,19 +189,23 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
-	// Write the file to the cache
+	// Write the file to the cache asynchronously so the response to the
+	// client is not limited by disk throughput. A small buffer is used to
+	// prevent unbounded memory usage while still decoupling the disk write.
 	file, err := os.Create(c.buildLocalPath(r.URL))
 	if err != nil {
 		log.Printf("Error creating file: %v\n", err)
 		return
 	}
-	defer file.Close()
 
-	// Use io.MultiWriter to write to both the file and the response writer
-	multiWriter := io.MultiWriter(w, file)
+	asyncWriter := newAsyncFileWriter(file, 32)
+	multiWriter := io.MultiWriter(w, asyncWriter)
 
-	// Write the file to the cache
+	// Stream data to the client and asynchronously to disk.
 	bw, err := io.Copy(multiWriter, resp.Body)
+	if errClose := asyncWriter.Close(); err == nil && errClose != nil {
+		err = errClose
+	}
 	if err != nil {
 		log.Printf("Error writing file: %v\n", err)
 		os.Remove(c.buildLocalPath(r.URL))

@@ -25,8 +25,9 @@ func (c *FSCache) StartSourcesVerification() {
 
 func (c *FSCache) runSourcesVerification() {
 	// initial delay
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Hour)
 	for {
+		log.Printf("[INFO:VERIFY] Starting source verification")
 		if err := c.verifySources(); err != nil {
 			log.Printf("[ERROR:VERIFY] %v", err)
 		} else {
