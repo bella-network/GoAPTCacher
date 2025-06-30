@@ -4,7 +4,7 @@ go 1.24.4
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/ncruces/go-sqlite3 v0.26.2
+	github.com/ncruces/go-sqlite3 v0.26.3
 	gopkg.in/yaml.v2 v2.4.0
 )
 
