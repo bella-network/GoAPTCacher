@@ -11,6 +11,14 @@ type Config struct {
 	ListenPort       int    `yaml:"listen_port"`        // Port on which the proxy server listens
 	ListenPortSecure int    `yaml:"listen_port_secure"` // Port on which the proxy server listens for HTTPS requests
 
+	Database struct {
+		Hostname string `yaml:"hostname"` // Hostname of the database server
+		Username string `yaml:"username"` // Username for the database
+		Password string `yaml:"password"` // Password for the database
+		Database string `yaml:"database"` // Name of the database to use
+		Port     int    `yaml:"port"`     // Port of the database server
+	} `yaml:"database"`
+
 	Index struct {
 		Enable    bool     `yaml:"enable"`    // Enable the overview page which is shown when accessing the proxy server directly. This also sets a AIA extension in the certificate.
 		Hostnames []string `yaml:"hostnames"` // List of hostnames which should be used for configuration or for direct access to the overview page

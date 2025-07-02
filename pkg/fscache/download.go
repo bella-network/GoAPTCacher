@@ -17,7 +17,7 @@ func (c *FSCache) downloadFileSimple(url string, localPath string) error {
 	}
 
 	// Add the user agent to the request
-	req.Header.Add("User-Agent", "GoAptCacher")
+	req.Header.Add("User-Agent", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
 
 	// Send the request
 	resp, err := c.client.Do(req)

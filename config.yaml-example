@@ -1,4 +1,10 @@
 cache_directory: "/var/cache/goaptcacher"
+database:
+  hostname: "localhost"
+  username: "goaptcacher"
+  password: "goaptcacher"
+  database: "goaptcacher"
+  port: 3306
 
 domains:
   - "archive.ubuntu.com" # Ubuntu archive

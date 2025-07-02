@@ -31,9 +31,6 @@ func (c *FSCache) expireUnusedFiles() {
 
 		log.Printf("[INFO:EXPIRE] File expiration finished\n")
 
-		c.accessCache.db.Exec("VACUUM")
-		log.Printf("[INFO:EXPIRE] Database vacuumed\n")
-
 		// Sleep for a day
 		time.Sleep(time.Hour * 12)
 	}
@@ -45,7 +42,7 @@ func (c *FSCache) GetUnusedFiles(days uint64) ([]url.URL, error) {
 		return nil, nil
 	}
 
-	rows, err := c.accessCache.db.Query("SELECT domain, path, url, size FROM access_cache WHERE last_accessed < ?", time.Now().Add(-time.Hour*24*time.Duration(days)))
+	rows, err := c.db.Query("SELECT d.protocol, d.domain, f.path, f.url, f.size FROM access_cache a JOIN files f ON a.file = f.id JOIN domains d ON f.domain = d.id WHERE a.last_access < NOW() - INTERVAL ? DAY", days)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +53,8 @@ func (c *FSCache) GetUnusedFiles(days uint64) ([]url.URL, error) {
 	for rows.Next() {
 		var domain, path, rurl string
 		var size uint64
-		err = rows.Scan(&domain, &path, &rurl, &size)
+		var protocol int
+		err = rows.Scan(&protocol, &domain, &path, &rurl, &size)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +86,7 @@ func (c *FSCache) DeleteUnreferencedFiles() error {
 // deleteUnreferencedFilesByDatabase deletes all files that are found in the
 // database but not on the filesystem.
 func (c *FSCache) deleteUnreferencedFilesByDatabase() error {
-	rows, err := c.accessCache.db.Query("SELECT domain, path, url, size FROM access_cache")
+	rows, err := c.db.Query("SELECT ...")
 	if err != nil {
 		return err
 	}
@@ -130,7 +128,7 @@ func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 	}
 
 	// Get all files in the database
-	rows, err := c.accessCache.db.Query("SELECT domain, path, url, size FROM access_cache")
+	rows, err := c.db.Query("SELECT d.protocol, d.domain, f.path, f.url FROM files f JOIN domains d ON f.domain = d.id")
 	if err != nil {
 		return err
 	}
@@ -140,7 +138,8 @@ func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 	filesInDatabase := map[string]bool{}
 	for rows.Next() {
 		var domain, path, rurl string
-		err = rows.Scan(&domain, &path, &rurl)
+		var protocol int
+		err = rows.Scan(&protocol, &domain, &path, &rurl)
 		if err != nil {
 			return err
 		}

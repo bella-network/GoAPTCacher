@@ -7,7 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var RefreshFiles = []string{
@@ -32,18 +35,16 @@ func (c *FSCache) evaluateRefresh(localFile *url.URL, lastAccess AccessEntry) bo
 	recheckTimeout := time.Hour * 24
 
 	// Check if the file is in the list of files that should be refreshed more often
-	for _, file := range RefreshFiles {
-		if file == filename {
-			recheckTimeout = time.Minute * 5
-			break
-		}
+	if slices.Contains(RefreshFiles, filename) {
+		recheckTimeout = time.Minute * 5
 	}
 
 	// Check if the file is older than the recheck timeout
 	return time.Since(lastAccess.LastChecked) > recheckTimeout
 }
 
-func (c *FSCache) cacheRefesh(localFile *url.URL, lastAccess AccessEntry) {
+// cacheRefresh refreshes the file if it has changed. If the file has changed, it
+func (c *FSCache) cacheRefresh(localFile *url.URL, lastAccess AccessEntry) {
 	generatedName := c.buildLocalPath(localFile)
 	// From localFile, get the filename only without the path
 	filename := filepath.Base(generatedName)
@@ -66,13 +67,20 @@ func (c *FSCache) cacheRefesh(localFile *url.URL, lastAccess AccessEntry) {
 		// Parse protocol and domain from
 		for _, file := range connectedFiles {
 			// Get the URL of the connected file
-			connectedFile, ok := c.accessCache.GetFileByPath(lastAccess.URL, file)
+			connectedFile, ok := c.GetFileByPath(lastAccess.URL.String(), file)
 			if !ok {
 				continue
 			}
 
+			var protocol int
+			if connectedFile.Scheme == "https" {
+				protocol = 1 // HTTPS
+			} else {
+				protocol = 0 // HTTP
+			}
+
 			// Get the last access of the connected file
-			connectedLastAccess, ok := c.accessCache.Get(connectedFile.Host, connectedFile.Path)
+			connectedLastAccess, ok := c.Get(protocol, connectedFile.Host, connectedFile.Path)
 			if !ok {
 				// If the file is not in the cache or the last access is not
 				// available, we can't refresh the file as it might not exist in
@@ -98,22 +106,28 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// possible, use the ETag or Last-Modified header. If the file has changed,
 	// download the new file. A unchanged file should be signaled by the server
 	// using a 304 Not Modified HTTP response.
-	req, err := http.NewRequest("GET", lastAccess.URL, nil)
+	req, err := http.NewRequest("GET", lastAccess.URL.String(), nil)
 	if err != nil {
 		return false, err
 	}
 
 	// Add header to identify the client
-	req.Header.Add("User-Agent", "GoAptCacher")
+	req.Header.Set("User-Agent", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
+	req.Header.Set("X-ACTION", "refresh")
 
 	// If ETag is available, add it to the request
 	if lastAccess.ETag != "" {
-		req.Header.Add("If-None-Match", lastAccess.ETag)
+		req.Header.Set("If-None-Match", lastAccess.ETag)
 	}
 
 	// If Last-Modified is available, add it to the request
 	if !lastAccess.RemoteLastModified.IsZero() {
-		req.Header.Add("If-Modified-Since", lastAccess.RemoteLastModified.Format(http.TimeFormat))
+		req.Header.Set("If-Modified-Since", lastAccess.RemoteLastModified.Format(http.TimeFormat))
+	}
+
+	// This is specific to the GoAptCacher implementation, we add the SHA256 hash as header to the request
+	if lastAccess.SHA256 != "" {
+		req.Header.Set("X-SHA256", lastAccess.SHA256)
 	}
 
 	// Perform the request
@@ -123,11 +137,14 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	}
 	defer resp.Body.Close()
 
+	// Determine protocol from the URL scheme
+	protocol := DetermineProtocolFromURL(lastAccess.URL)
+
 	// First check if the HTTP status code is 304 Not Modified, if so update
 	// only the last checked time.
 	if resp.StatusCode == http.StatusNotModified {
 		// Update the last checked time
-		c.accessCache.UpdateLastChecked(localFile.Host, localFile.Path)
+		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
 		log.Printf("[INFO:REFRESH:304] %s%s has not changed\n", localFile.Host, localFile.Path)
 		return false, nil
 	}
@@ -135,7 +152,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// If status code is 404 Not Found, mark the file for deletion.
 	if resp.StatusCode == http.StatusNotFound {
 		// Mark the file for deletion
-		c.accessCache.MarkForDeletion(localFile.Host, localFile.Path)
+		c.MarkForDeletion(protocol, localFile.Host, localFile.Path)
 		log.Printf("[INFO:REFRESH:404] %s%s not found, marked for deletion\n", localFile.Host, localFile.Path)
 		return false, nil
 	}
@@ -155,7 +172,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	}
 	if lastModified.Before(lastAccess.RemoteLastModified) {
 		// Update the last checked time
-		c.accessCache.UpdateLastChecked(localFile.Host, localFile.Path)
+		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
 		log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
 		return false, nil
 	}
@@ -164,7 +181,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	etag := resp.Header.Get("ETag")
 	if etag != "" && etag == lastAccess.ETag {
 		// Update the last checked time
-		c.accessCache.UpdateLastChecked(localFile.Host, localFile.Path)
+		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
 		log.Printf("[INFO:REFRESH:NOTMODIFIED:ETAG] %s%s has not changed\n", localFile.Host, localFile.Path)
 		return false, nil
 	}
@@ -172,8 +189,18 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// At this point, we know that the file has changed. We need to download the
 	// new file and update the cache.
 
+	// Generate a temporary filename to download the file to. This is
+	// necessary to avoid overwriting the old file while it is still being
+	// downloaded and to ensure that the file is only replaced once the download is
+	// complete.
+	uuid, err := uuid.NewRandom()
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:RANDOM] %s\n", err)
+		return false, err
+	}
+
 	// Create the file
-	file, err := os.Create(generatedName + "-dl")
+	file, err := os.Create(generatedName + "-dl-" + uuid.String())
 	if err != nil {
 		log.Printf("[ERROR:REFRESH:CREATE] %s\n", err)
 		return false, err
@@ -195,15 +222,15 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	}
 
 	// Rename the file and overwrite the old file
-	err = os.Rename(generatedName+"-dl", generatedName)
+	err = os.Rename(generatedName+"-dl-"+uuid.String(), generatedName)
 	if err != nil {
 		log.Printf("[ERROR:REFRESH:RENAME] %s\n", err)
 		return false, err
 	}
 
 	// Update the access cache with the new file
-	c.accessCache.UpdateFile(localFile.Host, localFile.Path, lastAccess.URL, lastModified, etag, wrb)
-	go c.accessCache.TrackRequest(false, lastAccess.Size)
+	c.UpdateFile(protocol, localFile.Host, localFile.Path, lastAccess.URL.String(), lastModified, etag, wrb)
+	go c.TrackRequest(false, lastAccess.Size)
 
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 

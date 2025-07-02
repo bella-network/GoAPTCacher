@@ -5,14 +5,17 @@ import (
 	"os"
 	"time"
 
+	"gitlab.com/bella.network/goaptcacher/lib/dbc"
 	"gitlab.com/bella.network/goaptcacher/pkg/fscache"
 	"gitlab.com/bella.network/goaptcacher/pkg/httpsintercept"
+	"gitlab.com/bella.network/goaptcacher/pkg/odb"
 )
 
 var config *Config                      // Config struct holding the configuration values
 var loadedDomains uint64                // Number of loaded domains
 var cache *fscache.FSCache              // Cache object used to store cached files
 var intercept *httpsintercept.Intercept // Intercept object used to handle HTTPS interception
+var db *odb.DBConnection                // Database connection object used to access the database
 
 func main() {
 	// Detect if the program is launched by systemd, in that case only print
@@ -38,6 +41,24 @@ func main() {
 		log.Fatal("Error reading config file: ", err)
 	}
 
+	// Initialize the database connection
+	db, err = odb.NewMySQL(odb.DatabaseOptions{
+		Host:     config.Database.Hostname,
+		Username: config.Database.Username,
+		Password: config.Database.Password,
+		Database: config.Database.Database,
+		Port:     config.Database.Port,
+	})
+	if err != nil {
+		log.Fatal("Error initializing database connection: ", err)
+	}
+
+	// Run database creation and migration
+	err = dbc.CheckSchemaCreation(db)
+	if err != nil {
+		log.Fatal("Error checking database schema creation: ", err)
+	}
+
 	// If no domains and passthrough domains are configured, log a warning that
 	// all requests will be allowed.
 	loadedDomains = uint64(len(config.Domains) + len(config.PassthroughDomains))
@@ -47,6 +68,21 @@ func main() {
 		log.Println("[WARN] Cache will be disabled!")
 	} else {
 		log.Printf("[INFO] Loaded %d domains and %d passthrough domains\n", len(config.Domains), len(config.PassthroughDomains))
+
+		// Adding domains to the database before first request is made to ensure
+		// that the database is ready to handle requests.
+		for _, domain := range config.Domains {
+			err = dbc.AddDomain(db, domain)
+			if err != nil {
+				log.Println("[WARN] Error adding domain to database: ", err)
+			}
+		}
+		for _, domain := range config.PassthroughDomains {
+			err = dbc.AddDomain(db, domain)
+			if err != nil {
+				log.Println("[WARN] Error adding passthrough domain to database: ", err)
+			}
+		}
 	}
 
 	// Show warning if index page is not enabled and show hint how to use the proxy
@@ -101,7 +137,7 @@ func main() {
 	}
 
 	// Initiate cache
-	cache = fscache.NewFSCache(config.CacheDirectory)
+	cache = fscache.NewFSCache(config.CacheDirectory, db.GetDB())
 	// Start periodic verification of cached packages
 	cache.StartSourcesVerification()
 

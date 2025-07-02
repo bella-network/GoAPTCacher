@@ -17,7 +17,7 @@ func (c *FSCache) DeleteFile(file *url.URL) error {
 	}
 
 	// Delete the file from the database
-	c.accessCache.Delete(file.Host, file.Path)
+	c.Delete(DetermineProtocolFromURL(file), file.Host, file.Path)
 
 	return nil
 }

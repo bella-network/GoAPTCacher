@@ -2,6 +2,7 @@ package fscache
 
 import (
 	"bufio"
+	"compress/bzip2"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ulikunitz/xz"
 )
 
 // StartSourcesVerification starts a background goroutine which
@@ -25,7 +28,7 @@ func (c *FSCache) StartSourcesVerification() {
 
 func (c *FSCache) runSourcesVerification() {
 	// initial delay
-	time.Sleep(time.Hour)
+	time.Sleep(time.Minute * 5)
 	for {
 		log.Printf("[INFO:VERIFY] Starting source verification")
 		if err := c.verifySources(); err != nil {
@@ -39,22 +42,24 @@ func (c *FSCache) runSourcesVerification() {
 
 // verifySources performs a single verification run.
 func (c *FSCache) verifySources() error {
-	db := c.accessCache.GetDatabaseConnection()
-	rows, err := db.Query("SELECT domain, path, url FROM access_cache WHERE path LIKE '%/InRelease'")
+	rows, err := c.db.Query("SELECT (SELECT protocol FROM domains WHERE id = f.domain) AS protocol, (SELECT domain FROM domains WHERE id = f.domain) AS domain, path, url, etag FROM files WHERE path LIKE '%/InRelease'")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	type releaseEntry struct {
-		domain string
-		url    string
+		domain   string
+		url      string
+		etag     string
+		protocol int
 	}
 	releases := []releaseEntry{}
 	for rows.Next() {
-		var domain, path, u string
-		if err := rows.Scan(&domain, &path, &u); err == nil {
-			releases = append(releases, releaseEntry{domain: domain, url: u})
+		var domain, path, u, e string
+		var protocol int
+		if err := rows.Scan(&protocol, &domain, &path, &u, &e); err == nil {
+			releases = append(releases, releaseEntry{domain: domain, url: u, etag: e, protocol: protocol})
 		}
 	}
 
@@ -69,7 +74,7 @@ func (c *FSCache) verifySources() error {
 		base := strings.TrimSuffix(r.url, "InRelease")
 		domain := r.domain
 		for _, sum := range sums {
-			if strings.HasSuffix(sum.file, "Packages") || strings.HasSuffix(sum.file, "Packages.gz") {
+			if strings.HasSuffix(sum.file, "Packages") || strings.HasSuffix(sum.file, "Packages.gz") || strings.HasSuffix(sum.file, "Packages.xz") || strings.HasSuffix(sum.file, "Packages.bz2") {
 				newUrl := base + sum.file
 				pkgs, err := fetchPackagesIndex(c.client, newUrl)
 				if err != nil {
@@ -93,7 +98,9 @@ func (c *FSCache) verifySources() error {
 		}
 	}
 
-	rows2, err := db.Query("SELECT domain, path FROM access_cache WHERE path LIKE '%.deb'")
+	// Now verify the cached .deb files against the packagesChecksums map by
+	// selecting every .deb file from the files table
+	rows2, err := c.db.Query("SELECT (SELECT protocol FROM domains WHERE id = f.domain) AS protocol, (SELECT domain FROM domains WHERE id = f.domain) AS domain, path FROM files WHERE path LIKE '%.deb'")
 	if err != nil {
 		return err
 	}
@@ -101,13 +108,14 @@ func (c *FSCache) verifySources() error {
 
 	for rows2.Next() {
 		var domain, path string
-		if err := rows2.Scan(&domain, &path); err != nil {
+		var protocol int
+		if err := rows2.Scan(&protocol, &domain, &path); err != nil {
 			continue
 		}
 		expected, ok := packagesChecksums[domain+path]
 		if !ok {
 			log.Printf("[INFO:VERIFY] %s%s not found in packages index, marking for deletion", domain, path)
-			c.accessCache.MarkForDeletion(domain, path)
+			c.MarkForDeletion(protocol, domain, path)
 			continue
 		}
 		filePath := c.CachePath + "/" + domain + path
@@ -117,7 +125,7 @@ func (c *FSCache) verifySources() error {
 		}
 		if h != expected {
 			log.Printf("[INFO:VERIFY] %s%s checksum mismatch: expected %s, got %s, marking for deletion", domain, path, expected, h)
-			c.accessCache.MarkForDeletion(domain, path)
+			c.MarkForDeletion(protocol, domain, path)
 		}
 	}
 
@@ -210,7 +218,23 @@ func fetchPackagesIndex(client *http.Client, u string) (map[string]string, error
 		}
 		defer gz.Close()
 		reader = gz
+
+	} else if strings.HasSuffix(u, ".bz2") {
+		bz2a := bzip2.NewReader(resp.Body)
+		if bz2a == nil {
+			return nil, errors.New("failed to create bzip2 reader")
+		}
+		reader = bz2a
+
+	} else if strings.HasSuffix(u, ".xz") {
+		xza, err := xz.NewReader(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		reader = xza
+
 	}
+
 	return parsePackages(reader), nil
 }
 

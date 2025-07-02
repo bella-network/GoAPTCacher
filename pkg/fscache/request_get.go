@@ -1,6 +1,8 @@
 package fscache
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log"
 	"net"
@@ -8,12 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // serveGETRequest is the basic function to serve a GET request for a client.
 func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
+	protocol := DetermineProtocolFromURL(r.URL)
+
 	// Check the access cache for the requested file
-	lastAccess, ok := c.accessCache.Get(r.URL.Host, r.URL.Path)
+	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
 		// Remove the port from remote address if it is present
 		remoteAddr := r.RemoteAddr
@@ -22,8 +28,8 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		}
 
 		// Update last hit time for the file
-		c.accessCache.Hit(r.URL.Host, r.URL.Path)
-		c.accessCache.AddURLIfNotExists(r.URL.Host, r.URL.Path, r.URL.String())
+		c.Hit(protocol, r.URL.Host, r.URL.Path)
+		c.AddURLIfNotExists(protocol, r.URL.Host, r.URL.Path, r.URL.String())
 
 		// Set header that describes the cache hit
 		r.Header.Add("X-Cache", "HIT")
@@ -32,7 +38,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		if c.evaluateRefresh(r.URL, lastAccess) {
 			// File should be checked if a new version is available on the
 			// internet for cache refresh.
-			go c.cacheRefesh(r.URL, lastAccess)
+			go c.cacheRefresh(r.URL, lastAccess)
 		}
 
 		// Add the Last-Modified header to the response
@@ -43,6 +49,11 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		// Add the ETag header to the response if available
 		if lastAccess.ETag != "" {
 			w.Header().Set("ETag", lastAccess.ETag)
+		}
+
+		// Add the SHA256 header to the response if available
+		if lastAccess.SHA256 != "" {
+			w.Header().Set("X-SHA256", lastAccess.SHA256)
 		}
 
 		// Client may has delivered the header "If-Modified-Since". If the file has not been modified since the
@@ -58,22 +69,22 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			if lastAccess.RemoteLastModified.Before(parsedTime) {
 				w.WriteHeader(http.StatusNotModified)
 				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", remoteAddr, r.URL.Host, r.URL.Path)
-				go c.accessCache.TrackRequest(true, 0)
+				go c.TrackRequest(true, 0)
 				return
 			}
 		}
 
 		// Direct cache hit, serve the file directly to the client and return.
-		c.accessCache.CreateFileLock(r.URL.Host, r.URL.Path)
+		c.CreateFileLock(protocol, r.URL.Host, r.URL.Path)
 		// Remove the file lock
-		defer c.accessCache.RemoveFileLock(r.URL.Host, r.URL.Path)
+		defer c.RemoveFileLock(protocol, r.URL.Host, r.URL.Path)
 
 		// Serve the file to the client
 		http.ServeFile(w, r, c.buildLocalPath(r.URL))
 
 		// Log the cache hit
 		log.Printf("[INFO:GET:HIT:%s] %s\n", remoteAddr, r.URL.String())
-		go c.accessCache.TrackRequest(true, lastAccess.Size)
+		go c.TrackRequest(true, lastAccess.Size)
 
 		return
 	}
@@ -84,8 +95,11 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 
 // serveGETRequestCacheMiss is the function to serve a GET request for a client if the cache was missed.
 func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWriter, retry uint64) {
+	protocol := DetermineProtocolFromURL(r.URL)
+
 	// If retry count is too high, return an error to the client.
 	if retry > 25 {
+		log.Printf("[ERROR:GET:RETRY:%d] %s%s - Too many retries, giving up\n", retry, r.URL.Host, r.URL.Path)
 		http.Error(
 			w,
 			"File is currently being downloaded, please try again later",
@@ -97,16 +111,16 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	// File is requested to be direcrly downloaded. As parallel downloads are
 	// possible of the same file, block all other requests for the same file
 	// until the download is finished.
-	created := c.accessCache.CreateExclusiveWriteLock(r.URL.Host, r.URL.Path)
+	created := c.CreateExclusiveWriteLock(protocol, r.URL.Host, r.URL.Path)
 	if !created {
 		time.Sleep(time.Second)
 		c.serveGETRequestCacheMiss(r, w, retry+1)
 		return
 	}
-	defer c.accessCache.DeleteWriteLock(r.URL.Host, r.URL.Path)
+	defer c.DeleteWriteLock(protocol, r.URL.Host, r.URL.Path)
 
 	// File might be downloaded by another request, check again.
-	_, ok := c.accessCache.Get(r.URL.Host, r.URL.Path)
+	_, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
 		// Retry the request.
 		c.serveGETRequest(r, w)
@@ -117,11 +131,21 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	if fileInfo, err := os.Stat(c.buildLocalPath(r.URL)); err == nil {
 		// File exists, but is not in the access cache. This can happen if the
 		// cache was deleted or the file was added manually.
-		c.accessCache.Set(r.URL.Host, r.URL.Path, AccessEntry{
+
+		// Generate SHA256 hash of the file
+		hash, err := GenerateSHA256Hash(c.buildLocalPath(r.URL))
+		if err != nil {
+			log.Printf("Error generating SHA256 hash: %v\n", err)
+			http.Error(w, "Error generating file hash", http.StatusInternalServerError)
+			return
+		}
+
+		c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
 			RemoteLastModified: fileInfo.ModTime(),
 			LastAccessed:       time.Now(),
-			URL:                r.URL.String(),
+			URL:                r.URL,
 			Size:               fileInfo.Size(),
+			SHA256:             hash,
 		})
 
 		// Set header that describes the cache hit
@@ -153,7 +177,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	// Add a header to indicate that the request is coming from the cache
 	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	req.Header.Set("X-Proxy-Server", "goaptcacher")
+	req.Header.Set("X-Proxy-Server", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
 
 	// Send the request to the original source
 	resp, err := c.client.Do(req)
@@ -189,15 +213,21 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
+	// Create a UUID for the file to prevent conflicts with other downloads
+	randomName := uuid.New().String()
+
 	// Write the file to the cache asynchronously so the response to the
 	// client is not limited by disk throughput. A small buffer is used to
 	// prevent unbounded memory usage while still decoupling the disk write.
-	file, err := os.Create(c.buildLocalPath(r.URL))
+	file, err := os.Create(c.buildLocalPath(r.URL) + randomName)
 	if err != nil {
 		log.Printf("Error creating file: %v\n", err)
 		return
 	}
 
+	// Create an async file writer that writes to the file with a buffer size of
+	// 32KB This allows the file to be written asynchronously while still being
+	// able to stream the response to the client.
 	asyncWriter := newAsyncFileWriter(file, 32)
 	multiWriter := io.MultiWriter(w, asyncWriter)
 
@@ -212,6 +242,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
+	// Check if the number of bytes written matches the Content-Length header
 	if resp.ContentLength > 0 && resp.ContentLength != bw {
 		log.Printf("Error writing file: expected %d bytes, got %d\n", resp.ContentLength, bw)
 		os.Remove(c.buildLocalPath(r.URL))
@@ -229,16 +260,51 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		}
 	}
 
+	// Generate SHA256 hash of the downloaded file
+	hash, err := GenerateSHA256Hash(c.buildLocalPath(r.URL) + randomName)
+	if err != nil {
+		log.Printf("Error generating SHA256 hash: %v\n", err)
+		http.Error(w, "Error generating file hash", http.StatusInternalServerError)
+		return
+	}
+
+	// Rename the file to its final name
+	err = os.Rename(c.buildLocalPath(r.URL)+randomName, c.buildLocalPath(r.URL))
+	if err != nil {
+		log.Printf("Error renaming file: %v\n", err)
+		http.Error(w, "Error renaming file", http.StatusInternalServerError)
+		return
+	}
+
 	// Update the access cache with the new file
-	c.accessCache.Set(r.URL.Host, r.URL.Path, AccessEntry{
+	if err := c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
 		RemoteLastModified: lastModifiedTime,
 		LastAccessed:       time.Now(),
 		LastChecked:        time.Now(),
 		ETag:               resp.Header.Get("ETag"),
-		URL:                r.URL.String(),
+		URL:                r.URL,
 		Size:               bw,
-	})
+		SHA256:             hash,
+	}); err != nil {
+		log.Printf("Error updating access cache: %v\n", err)
+	}
 
 	log.Printf("[INFO:DL:CREATED] %s%s - Wrote %d bytes\n", r.URL.Host, r.URL.Path, bw)
-	go c.accessCache.TrackRequest(false, bw)
+	go c.TrackRequest(false, bw)
+}
+
+// GenerateSHA256Hash generates a SHA256 hash of the file at the given path.
+func GenerateSHA256Hash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

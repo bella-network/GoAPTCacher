@@ -1,13 +1,14 @@
-package cdb
+package dbc
 
 import (
 	"database/sql"
 	"time"
 )
 
+// TrackRequest tracks a request in the database.
 func TrackRequest(db *sql.DB, cacheHit bool, transferred int64) error {
 	_, err := db.Exec(
-		"INSERT OR IGNORE INTO stats (date, requests, hits, misses, traffic_down, traffic_up, tunnel, tunnel_transfer) VALUES (?, 0, 0, 0, 0, 0, 0, 0)",
+		"INSERT IGNORE INTO stats (date, requests, hits, misses, tunnel, traffic_down, traffic_up, tunnel_transfer) VALUES (?, 0, 0, 0, 0, 0, 0, 0)",
 		time.Now().Format("2006-01-02"),
 	)
 	if err != nil {
@@ -35,7 +36,7 @@ func TrackRequest(db *sql.DB, cacheHit bool, transferred int64) error {
 // TrackTunnelRequest tracks a tunnel request in the database.
 func TrackTunnelRequest(db *sql.DB, transferred int64) error {
 	_, err := db.Exec(
-		"INSERT OR IGNORE INTO stats (date, requests, hits, misses, traffic_down, traffic_up, tunnel, tunnel_transfer) VALUES (?, 0, 0, 0, 0, 0, 0, 0)",
+		"INSERT IGNORE INTO stats (date, requests, hits, misses, traffic_down, traffic_up, tunnel, tunnel_transfer) VALUES (?, 0, 0, 0, 0, 0, 0, 0)",
 		time.Now().Format("2006-01-02"),
 	)
 	if err != nil {

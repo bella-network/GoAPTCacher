@@ -14,6 +14,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -23,30 +25,33 @@ import (
 type FSCache struct {
 	client    *http.Client
 	CachePath string
+	db        *sql.DB // Database connection for access cache
 
 	CustomCachePath func(r *url.URL) string
 
-	accessCache      *accessCache
 	expirationInDays uint64
+
+	memoryFileReadLockMux  sync.RWMutex
+	memoryFileReadLock     map[string]time.Time
+	memoryFileWriteLockMux sync.RWMutex
+	memoryFileWriteLock    map[string]time.Time
 }
 
 // NewFSCache creates a new FSCache with the given cache path.
-func NewFSCache(cachePath string) *FSCache {
-	cache, err := newAccessCache(cachePath + "/access_cache.db")
-	if err != nil {
-		log.Fatalf("Error creating access cache: %s\n", err)
-	}
-
+func NewFSCache(cachePath string, db *sql.DB) *FSCache {
 	return &FSCache{
 		client: &http.Client{
 			Timeout: time.Hour, // Timeout every extreme long requests
 			Transport: &http.Transport{
-				Proxy:               nil,
-				MaxIdleConnsPerHost: 5,
+				Proxy:                 nil,             // No proxy by default
+				MaxIdleConnsPerHost:   7,               // Maximum number of idle connections per host
+				ResponseHeaderTimeout: time.Minute * 5, // Timeout for response headers
 			},
 		},
-		CachePath:   cachePath,
-		accessCache: cache,
+		CachePath:           cachePath,
+		db:                  db,
+		memoryFileReadLock:  make(map[string]time.Time),
+		memoryFileWriteLock: make(map[string]time.Time),
 	}
 }
 
@@ -65,7 +70,7 @@ func (c *FSCache) SetExpirationDays(days uint64) {
 
 // GetDatabaseConnection returns the database connection of the FSCache.
 func (c *FSCache) GetDatabaseConnection() *sql.DB {
-	return c.accessCache.GetDatabaseConnection()
+	return c.db
 }
 
 // buildLocalPath builds the local path for the given request.
@@ -118,4 +123,23 @@ func (c *FSCache) ServeFromRequest(r *http.Request, w http.ResponseWriter) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		log.Printf("Method not allowed: %s\n", r.Method)
 	}
+}
+
+// DetermineProtocol determines the protocol based on the given string.
+func DetermineProtocol(protocol string) int {
+	// Normalize the protocol to lowercase to handle case insensitivity
+	protocol = strings.ToLower(protocol)
+
+	// Determine the protocol based on the scheme
+	switch protocol {
+	case "https":
+		return 1 // HTTPS
+	default: // HTTP or any other protocol
+		return 0 // HTTP
+	}
+}
+
+// DetermineProtocolFromURL determines the protocol from the given URL.
+func DetermineProtocolFromURL(r *url.URL) int {
+	return DetermineProtocol(r.Scheme)
 }
