@@ -185,15 +185,20 @@ func (fs *FSCache) GetURL(protocol int, domain, path string) string {
 
 // UpdateFile updates the file for the given key.
 func (fs *FSCache) UpdateFile(protocol int, domain, path, url string, lastModified time.Time, etag string, size int64) {
-	_, _ = fs.db.Exec(
-		"UPDATE access_cache SET last_access = ?, last_check = ?, last_modified = ? WHERE file = (SELECT id FROM files WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?)",
-		time.Now(),
-		time.Now(),
-		lastModified,
+	_, err := fs.db.Exec(
+		"UPDATE files SET url = ?, modified = ?, etag = ?, size = ? WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?",
+		url,
+		lastModified.Format("2006-01-02 15:04:05"),
+		etag,
+		size,
 		protocol,
 		domain,
 		path,
 	)
+	if err != nil {
+		log.Printf("[ERROR] Failed to update file: %v", err)
+		return
+	}
 }
 
 // AddURLIfNotExists adds the URL to the given key if the url isn't already
