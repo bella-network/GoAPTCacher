@@ -45,7 +45,7 @@ func checkOverrides(r *http.Request) {
 		overridePath := strings.Join(overrideParts[1:], "/")
 
 		// If destination host is ftp.{country}.debian.org, remap to the configured server
-		if (strings.HasSuffix(r.Host, "debian.org") && strings.HasPrefix(r.Host, "ftp.") || r.Host == "deb.debian.org") && r.Host != overrideHost {
+		if (strings.HasSuffix(r.Host, "debian.org") && strings.HasPrefix(r.Host, "ftp.")) && r.Host != overrideHost {
 			log.Printf("[INFO:OVERRIDE:DEBIAN] Overriding %s to %s\n", r.Host, config.Overrides.DebianServer)
 			r.Host = overrideHost
 			r.URL.Host = overrideHost
@@ -53,6 +53,28 @@ func checkOverrides(r *http.Request) {
 			// If the override path is set, append it to the request URL
 			if overridePath != "" {
 				r.URL.Path = overridePath + r.URL.Path
+			}
+		}
+
+		// The host deb.debian.org is a special case, as at this host all paths
+		// are available. Remap some paths to another host.
+		if r.Host == "deb.debian.org" {
+			if strings.HasPrefix(r.URL.Path, "/debian/") {
+				r.Host = overrideHost
+				r.URL.Host = overrideHost
+
+				log.Printf("[INFO:OVERRIDE:DEBIAN] Overriding %s to %s for path %s\n", r.Host, config.Overrides.DebianServer, r.URL.Path)
+				if overridePath != "" {
+					r.URL.Path = overridePath + r.URL.Path
+				}
+			} else if strings.HasPrefix(r.URL.Path, "/debian-security/") ||
+				strings.HasPrefix(r.URL.Path, "/debian-security-debug/") ||
+				strings.HasPrefix(r.URL.Path, "/debian-debug/") ||
+				strings.HasPrefix(r.URL.Path, "/debian-ports/") {
+				r.Host = "security.debian.org"
+				r.URL.Host = "security.debian.org"
+
+				log.Printf("[INFO:OVERRIDE:DEBIAN] Overriding %s to security.debian.org for path %s\n", r.Host, r.URL.Path)
 			}
 		}
 	}
