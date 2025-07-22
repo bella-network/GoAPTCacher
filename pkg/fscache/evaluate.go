@@ -22,7 +22,30 @@ var RefreshFiles = []string{
 }
 
 var ConnectedFiles = map[string][]string{
-	"InRelease":   {"Release", "Release.gpg", "main/binary-amd64/Packages", "main/binary-amd64/Packages.gz", "main/binary-i386/Packages", "main/binary-i386/Packages.gz", "main/binary-arm64/Packages", "main/binary-arm64/Packages.gz", "main/binary-armhf/Packages", "main/binary-armhf/Packages.gz", "main/binary-all/Packages", "main/binary-all/Packages.gz"},
+	"InRelease": {
+		"Release",
+		"Release.gpg",
+		"main/binary-amd64/Packages",
+		"main/binary-amd64/Packages.gz",
+		"main/binary-amd64/Packages.bz2",
+		"main/binary-amd64/Packages.xz",
+		"main/binary-i386/Packages",
+		"main/binary-i386/Packages.gz",
+		"main/binary-i386/Packages.bz2",
+		"main/binary-i386/Packages.xz",
+		"main/binary-arm64/Packages",
+		"main/binary-arm64/Packages.gz",
+		"main/binary-arm64/Packages.bz2",
+		"main/binary-arm64/Packages.xz",
+		"main/binary-armhf/Packages",
+		"main/binary-armhf/Packages.gz",
+		"main/binary-armhf/Packages.bz2",
+		"main/binary-armhf/Packages.xz",
+		"main/binary-all/Packages",
+		"main/binary-all/Packages.gz",
+		"main/binary-all/Packages.bz2",
+		"main/binary-all/Packages.xz",
+	},
 	"Release":     {"Release.gpg", "InRelease"},
 	"Release.gpg": {"Release", "InRelease"},
 }
