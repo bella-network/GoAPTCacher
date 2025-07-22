@@ -139,7 +139,7 @@ func main() {
 	// Initiate cache
 	cache = fscache.NewFSCache(config.CacheDirectory, db.GetDB())
 	// Start periodic verification of cached packages
-	cache.StartSourcesVerification()
+	//cache.StartSourcesVerification()
 
 	// Set expiration days for the cache
 	if config.Expiration.UnusedDays > 0 {
