@@ -114,17 +114,6 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 			pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
 		}
 
-		// Display list of configured domains
-		pageContent += `<li>Configured domains (caching enabled): <ul>`
-		for _, domain := range config.Domains {
-			pageContent += "<li>" + domain + "</li>"
-		}
-		// Display list of passthrough domains
-		pageContent += `</ul></li><li>Passthrough domains (proxy without caching): <ul>`
-		for _, domain := range config.PassthroughDomains {
-			pageContent += "<li>" + domain + "</li>"
-		}
-
 		pageContent += `</ul></li>`
 
 		// Display list of remapped URLs
@@ -144,6 +133,23 @@ func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
 		}
 		pageContent += `</ul></li>`
 		pageContent += `</ul></p>`
+
+		// List configured domains and passthrough domains
+
+		pageContent += `<h3>Configured domains</h3>
+		<p><ul>`
+
+		// Display list of configured domains
+		pageContent += `<li>Configured domains (caching enabled): <ul>`
+		for _, domain := range config.Domains {
+			pageContent += "<li>" + domain + "</li>"
+		}
+		// Display list of passthrough domains
+		pageContent += `</ul></li><li>Passthrough domains (proxy without caching): <ul>`
+		for _, domain := range config.PassthroughDomains {
+			pageContent += "<li>" + domain + "</li>"
+		}
+		pageContent += `</li></ul></p>`
 
 		title = "GoAPTCacher"
 	case "stats":
@@ -191,7 +197,7 @@ func httpPageStats() string {
 
 	// Query the database for some statistics
 	var filesCached, totalSize uint64
-	err := db.QueryRow("SELECT COUNT(*), SUM(size) FROM access_cache").Scan(&filesCached, &totalSize)
+	err := db.QueryRow("SELECT COUNT(*), SUM(size) FROM files").Scan(&filesCached, &totalSize)
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
