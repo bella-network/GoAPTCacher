@@ -145,7 +145,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 
 	// If Last-Modified is available, add it to the request
 	if !lastAccess.RemoteLastModified.IsZero() {
-		req.Header.Set("If-Modified-Since", lastAccess.RemoteLastModified.Format(http.TimeFormat))
+		req.Header.Set("If-Modified-Since", lastAccess.RemoteLastModified.UTC().Format(http.TimeFormat))
 	}
 
 	// This is specific to the GoAptCacher implementation, we add the SHA256 hash as header to the request

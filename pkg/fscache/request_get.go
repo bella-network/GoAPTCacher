@@ -204,9 +204,12 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	// Set Last-Modified header if available
 	if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
-		w.Header().Set("Last-Modified", lastModified)
+		if parsed, err := time.Parse(time.RFC1123, lastModified); err == nil {
+			w.Header().Set("Last-Modified", parsed.UTC().Format(time.RFC1123))
+		} else {
+			log.Printf("Invalid Last-Modified header: %s (%v)", lastModified, err)
+		}
 	}
-
 	// Set ETag header if available
 	if eTag := resp.Header.Get("ETag"); eTag != "" {
 		w.Header().Set("ETag", eTag)
