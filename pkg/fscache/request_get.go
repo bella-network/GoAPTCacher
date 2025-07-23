@@ -18,6 +18,10 @@ import (
 func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	protocol := DetermineProtocolFromURL(r.URL)
 
+	// Set basic headers for the response
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Cache-Control", "public, max-age=900")
+
 	// Check the access cache for the requested file
 	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
@@ -32,7 +36,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		c.AddURLIfNotExists(protocol, r.URL.Host, r.URL.Path, r.URL.String())
 
 		// Set header that describes the cache hit
-		r.Header.Add("X-Cache", "HIT")
+		w.Header().Set("X-Cache", "HIT")
 
 		// Check if the file should be rechecked
 		if c.evaluateRefresh(r.URL, lastAccess) {
@@ -43,7 +47,9 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 
 		// Add the Last-Modified header to the response
 		if !lastAccess.RemoteLastModified.IsZero() {
-			w.Header().Set("Last-Modified", lastAccess.RemoteLastModified.Format(time.RFC1123))
+			// Force the Last-Modified header to be in RFC1123 and GMT format as
+			// this is the format used by HTTP.
+			w.Header().Set("Last-Modified", lastAccess.RemoteLastModified.UTC().Format(time.RFC1123))
 		}
 
 		// Add the ETag header to the response if available
@@ -149,7 +155,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		})
 
 		// Set header that describes the cache hit
-		r.Header.Add("X-Cache", "ROUNDTRIP")
+		w.Header().Add("X-Cache", "ROUNDTRIP")
 
 		// Retry the request.
 		c.serveGETRequest(r, w)
@@ -194,7 +200,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	}
 
 	// Set header that describes the cache hit
-	r.Header.Add("X-Cache", "MISS")
+	w.Header().Set("X-Cache", "MISS")
 
 	// Set Last-Modified header if available
 	if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
