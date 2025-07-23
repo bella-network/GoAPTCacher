@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS domains (
   protocol TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
   domain VARCHAR(255) NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY domain_protocol (domain, protocol),
+  UNIQUE KEY domain_protocol (domain, protocol)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 `)
 	if err != nil {
@@ -82,9 +82,9 @@ CREATE TABLE IF NOT EXISTS stats (
 
 	_, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS keyvalue (
-  key VARCHAR(100) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `+"`key`"+` VARCHAR(100) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
   value TEXT NOT NULL,
-  PRIMARY KEY (key)
+  PRIMARY KEY (`+"`key`"+`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 `)
 	if err != nil {
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS keyvalue (
 	}
 
 	_, err = db.Exec(`
-INSERT INTO keyvalue (key, value) VALUES
+INSERT INTO keyvalue (`+"`key`"+`, value) VALUES
 ('schema_version',	'1');
 `)
 	if err != nil {
