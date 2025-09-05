@@ -123,8 +123,15 @@ func main() {
 		log.Println("[INFO] HTTPS interception enabled")
 
 		// Set domain for certificate if configured
-		if len(config.Domains) > 0 {
+		if config.HTTPS.CertificateDomain != "" {
+			intercept.SetDomain(config.HTTPS.CertificateDomain)
+		} else if len(config.Domains) > 0 {
 			intercept.SetDomain(config.Domains[0])
+		}
+
+		// If available, set AIA Address
+		if config.HTTPS.AIAAddress != "" {
+			intercept.SetAIAAddress(config.HTTPS.AIAAddress)
 		}
 
 		// Run periodic cleanup of expired certificates

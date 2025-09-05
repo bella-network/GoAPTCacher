@@ -42,9 +42,11 @@ type Config struct {
 		Prevent   bool `yaml:"prevent"`   // Prevent HTTPS requests from being cached and proxied
 		Intercept bool `yaml:"intercept"` // Enable HTTPS interception which allows the proxy to cache HTTPS requests
 
-		CertificatePublicKey  string `yaml:"cert"`     // Path to the public key file of the Intermediate CA or Root CA
-		CertificatePrivateKey string `yaml:"key"`      // Path to the private key file of the Intermediate CA or Root CA
-		CertificatePassword   string `yaml:"password"` // Password for the private key file of the Intermediate CA or Root CA
+		CertificatePublicKey  string `yaml:"cert"`               // Path to the public key file of the Intermediate CA or Root CA
+		CertificatePrivateKey string `yaml:"key"`                // Path to the private key file of the Intermediate CA or Root CA
+		CertificatePassword   string `yaml:"password"`           // Password for the private key file of the Intermediate CA or Root CA
+		CertificateDomain     string `yaml:"certificate_domain"` // Domain for which the certificate is valid
+		AIAAddress            string `yaml:"aia_address"`        // Authority Information Access (AIA) URL for the issued certificates (if empty, AIA extension is not added)
 		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
 

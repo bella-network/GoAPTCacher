@@ -23,7 +23,8 @@ type Intercept struct {
 	privateKey   *rsa.PrivateKey   // Private key of the Intermediate CA or Root CA used to sign the fake certificates
 	privateKeyEC *ecdsa.PrivateKey // Private key of the Intermediate CA or Root CA used to sign the fake certificates
 	rootCA       *x509.Certificate // Root CA certificate to complete the chain of trust
-	domain       string            // Primary domain (and port) of the HTTP server. Used to serve AIA certificates.
+	domain       string            // Primary domain of the HTTPS server. Used for SAN
+	aiaAddress   string            // Authority Information Access (AIA) URL for the issued certificates
 
 	// certificateStorage contains all issued certificates including rw lock
 	certStorage certificateStorage
@@ -152,8 +153,12 @@ func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, 
 	return intercept
 }
 
-// SetDomain sets the primary domain (and port) of the HTTP server. This domain
-// is used to serve the AIA certificates.
+// SetAIAAddress sets the Authority Information Access (AIA) URL for the issued certificates.
+func (c *Intercept) SetAIAAddress(aiaAddress string) {
+	c.aiaAddress = aiaAddress
+}
+
+// SetDomain sets the primary domain of the HTTPS server. This domain is used for SAN.
 func (c *Intercept) SetDomain(domain string) {
 	c.domain = domain
 }
@@ -290,8 +295,8 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 
 	// If domain is set, add AIA extension to certificate to allow clients to
 	// download the intermediate certificate if missing.
-	if c.domain != "" {
-		template.IssuingCertificateURL = []string{"http://" + c.domain + "/intercept.crt"}
+	if c.aiaAddress != "" {
+		template.IssuingCertificateURL = []string{c.aiaAddress}
 	}
 
 	// Also if domain is set, add main domain to SANs
@@ -326,7 +331,7 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 	}
 
 	// Load correct private key
-	var privKey interface{}
+	var privKey any
 	if c.privateKeyEC != nil {
 		privKey = c.privateKeyEC
 	} else {

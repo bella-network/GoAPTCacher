@@ -64,8 +64,8 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// TestSetDomain tests the SetDomain function
-func TestSetDomain(t *testing.T) {
+// TestSetAIAAddress tests the SetAIAAddress function
+func TestSetAIAAddress(t *testing.T) {
 	pubKey, privKey, rootCA, err := generateTestKeys()
 	if err != nil {
 		t.Fatalf("Failed to generate test keys: %v", err)
@@ -77,10 +77,10 @@ func TestSetDomain(t *testing.T) {
 	}
 
 	domain := "example.com"
-	intercept.SetDomain(domain)
+	intercept.SetAIAAddress(domain)
 
-	if intercept.domain != domain {
-		t.Fatalf("Expected domain %s, got %s", domain, intercept.domain)
+	if intercept.aiaAddress != domain {
+		t.Fatalf("Expected domain %s, got %s", domain, intercept.aiaAddress)
 	}
 }
 

@@ -39,17 +39,17 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(web.Style)
 	case "/", "":
-		httpServeSubpage(w, r, "index")
+		httpServeSubpage(w, "index")
 	case "/cache":
-		httpServeSubpage(w, r, "cache")
+		httpServeSubpage(w, "cache")
 	case "/stats":
-		httpServeSubpage(w, r, "stats")
+		httpServeSubpage(w, "stats")
 	case "/setup":
-		httpServeSubpage(w, r, "setup")
+		httpServeSubpage(w, "setup")
 	default:
 		// Serve a 404 page
 		w.WriteHeader(http.StatusNotFound)
-		httpServeSubpage(w, r, "404")
+		httpServeSubpage(w, "404")
 	}
 
 	log.Printf("[INFO:WEB] Requested path: %s\n", requestedPath)
@@ -68,7 +68,7 @@ func helperHTTPConstants() map[string]any {
 
 // httpServeSubpage is a helper function that serves a subpage of the main page
 // template.
-func httpServeSubpage(w http.ResponseWriter, r *http.Request, subpage string) {
+func httpServeSubpage(w http.ResponseWriter, subpage string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	// pageContent contains the main content of the requested page.
