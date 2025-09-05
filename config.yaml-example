@@ -36,6 +36,9 @@ https:
   cert: "/config/public.key"
   key: "/config/private.key"
   password: "my-password"
+  certificate_domain: "mydomain.com"
+  aia_address: "http://mydomain.com/goaptcacher.crt"
+  enable_crl: false
 
 remap:
   - from: "ubuntu.lagis.at"

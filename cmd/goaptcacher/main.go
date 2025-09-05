@@ -144,11 +144,13 @@ func main() {
 		}()
 
 		// Run periodic CRL generation if enabled
-		if config.HTTPS.EnableCRL {
+		if config.HTTPS.EnableCRL && config.HTTPS.CertificateDomain != "" {
+			crlAddress := fmt.Sprintf("http://%s:%d/_goaptcacher/revocation.crl", config.HTTPS.CertificateDomain, config.ListenPort)
+			intercept.SetCRLAddress(crlAddress)
 			go func() {
 				for {
 					if err := intercept.GenerateCRL(
-						fmt.Sprintf("http://%s:%d/_goaptcacher/revocation.crl", config.HTTPS.CertificateDomain, config.ListenPort),
+						crlAddress,
 						config.CacheDirectory+"/crl.pem",
 					); err != nil {
 						log.Println("[CRL-WARN] Error generating CRL: ", err)
@@ -156,6 +158,7 @@ func main() {
 					time.Sleep(time.Minute * 30)
 				}
 			}()
+			log.Println("[INFO] CRL generation enabled")
 		}
 	}
 

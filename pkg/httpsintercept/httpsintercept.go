@@ -1,6 +1,7 @@
 package httpsintercept
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ type Intercept struct {
 	rootCA       *x509.Certificate // Root CA certificate to complete the chain of trust
 	domain       string            // Primary domain of the HTTPS server. Used for SAN
 	aiaAddress   string            // Authority Information Access (AIA) URL for the issued certificates
+	crlAddress   string            // CRL Distribution Point URL for the issued certificates
 
 	// certificateStorage contains all issued certificates including rw lock
 	certStorage certificateStorage
@@ -154,14 +157,22 @@ func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, 
 	return intercept
 }
 
-// SetAIAAddress sets the Authority Information Access (AIA) URL for the issued certificates.
+// SetAIAAddress sets the Authority Information Access (AIA) URL for the issued
+// certificates.
 func (c *Intercept) SetAIAAddress(aiaAddress string) {
 	c.aiaAddress = aiaAddress
 }
 
-// SetDomain sets the primary domain of the HTTPS server. This domain is used for SAN.
+// SetDomain sets the primary domain of the HTTPS server. This domain is used
+// for SAN.
 func (c *Intercept) SetDomain(domain string) {
 	c.domain = domain
+}
+
+// SetCRLAddress sets the CRL Distribution Point URL for the issued
+// certificates.
+func (c *Intercept) SetCRLAddress(crlAddress string) {
+	c.crlAddress = crlAddress
 }
 
 // GetCertificate fetches a certificate from certificateStorage or issues a new one
@@ -300,20 +311,9 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		template.IssuingCertificateURL = []string{c.aiaAddress}
 	}
 
-	// Also if domain is set, add main domain to SANs
-	if c.domain != "" {
-		// Given domain might be a IPv4 or IPv6 address. If this is the case, it needs to be added to IPAddresses
-		if addr := net.ParseIP(c.domain); addr != nil {
-			template.IPAddresses = append(template.IPAddresses, addr)
-		} else {
-			// Domain might be a domain:port combination or just a domain. Split domain and port
-			domainParts := strings.Split(c.domain, ":")
-			if len(domainParts) > 1 {
-				template.DNSNames = append(template.DNSNames, domainParts[0])
-			} else {
-				template.DNSNames = append(template.DNSNames, c.domain)
-			}
-		}
+	// If CRL is enabled, add CRL Distribution Points to certificate
+	if c.crlAddress != "" {
+		template.CRLDistributionPoints = []string{c.crlAddress}
 	}
 
 	// detect if given domain is an IP address
@@ -323,6 +323,47 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		template.IPAddresses = append(template.IPAddresses, addr)
 	} else {
 		template.DNSNames = append(template.DNSNames, requestedHostname)
+	}
+
+	// Also if domain is set, add main domain to SANs
+	if c.domain != "" {
+		// Given domain might be a IPv4 or IPv6 address. If this is the case, it needs to be added to IPAddresses
+		if addr := net.ParseIP(c.domain); addr != nil {
+			// Check if IP is already in list
+			var found bool
+			for _, ip := range template.IPAddresses {
+				if ip.Equal(addr) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				template.IPAddresses = append(template.IPAddresses, addr)
+			}
+		} else {
+			// Domain might be a domain:port combination or just a domain. Split domain and port
+			domainParts := strings.Split(c.domain, ":")
+			if len(domainParts) > 1 {
+				// Check if domain is already in list
+				var found bool
+				if slices.Contains(template.DNSNames, domainParts[0]) {
+					found = true
+				}
+				if !found {
+					template.DNSNames = append(template.DNSNames, domainParts[0])
+				}
+			} else {
+				// Check if domain is already in list
+				var found bool
+				if slices.Contains(template.DNSNames, c.domain) {
+					found = true
+				}
+				if !found {
+					template.DNSNames = append(template.DNSNames, c.domain)
+				}
+			}
+		}
 	}
 
 	// generate new private key
@@ -377,14 +418,21 @@ func (c *Intercept) GenerateCRL(crlAddress, path string) error {
 	now := time.Now()
 	nextUpdate := now.AddDate(0, 0, 8)
 
+	var priv crypto.Signer
+	if c.privateKeyEC != nil {
+		priv = c.privateKeyEC
+	} else {
+		priv = c.privateKey
+	}
+
 	crlBytes, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
-		SignatureAlgorithm:  c.publicKey.SignatureAlgorithm,
+		SignatureAlgorithm:  0,
 		Issuer:              c.publicKey.Subject,
 		ThisUpdate:          now,
 		NextUpdate:          nextUpdate,
 		RevokedCertificates: revoked,
 		Number:              big.NewInt(now.Unix()),
-	}, c.publicKey, c.privateKey)
+	}, c.publicKey, priv)
 	if err != nil {
 		return err
 	}
