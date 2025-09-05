@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -141,6 +142,21 @@ func main() {
 				intercept.GC()
 			}
 		}()
+
+		// Run periodic CRL generation if enabled
+		if config.HTTPS.EnableCRL {
+			go func() {
+				for {
+					if err := intercept.GenerateCRL(
+						fmt.Sprintf("http://%s:%d/_goaptcacher/revocation.crl", config.HTTPS.CertificateDomain, config.ListenPort),
+						config.CacheDirectory+"/crl.pem",
+					); err != nil {
+						log.Println("[CRL-WARN] Error generating CRL: ", err)
+					}
+					time.Sleep(time.Minute * 30)
+				}
+			}()
+		}
 	}
 
 	// Initiate cache

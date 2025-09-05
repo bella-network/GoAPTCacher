@@ -47,6 +47,7 @@ type Config struct {
 		CertificatePassword   string `yaml:"password"`           // Password for the private key file of the Intermediate CA or Root CA
 		CertificateDomain     string `yaml:"certificate_domain"` // Domain for which the certificate is valid
 		AIAAddress            string `yaml:"aia_address"`        // Authority Information Access (AIA) URL for the issued certificates (if empty, AIA extension is not added)
+		EnableCRL             bool   `yaml:"enable_crl"`         // Enable Certificate Revocation List (CRL) checking for the issued certificates
 		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
 

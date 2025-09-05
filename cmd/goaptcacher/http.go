@@ -21,8 +21,8 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 	// Path /_goaptcacher is always present, so we strip it for a more simple
 	// handling of incoming requests.
 	requestedPath := r.URL.Path
-	if strings.HasPrefix(r.URL.Path, "/_goaptcacher") {
-		requestedPath = strings.TrimPrefix(r.URL.Path, "/_goaptcacher")
+	if after, ok := strings.CutPrefix(r.URL.Path, "/_goaptcacher"); ok {
+		requestedPath = after
 	}
 
 	// Set some default headers for the response. This is required to prevent
@@ -46,6 +46,8 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 		httpServeSubpage(w, "stats")
 	case "/setup":
 		httpServeSubpage(w, "setup")
+	case "/revocation.crl":
+		httpServeCRL(w, r)
 	default:
 		// Serve a 404 page
 		w.WriteHeader(http.StatusNotFound)
@@ -412,4 +414,15 @@ func getLocalIP() (string, error) {
 	}
 
 	return "", fmt.Errorf("no IP address found")
+}
+
+// httpServeCRL serves the Certificate Revocation List (CRL) if enabled in the configuration.
+func httpServeCRL(w http.ResponseWriter, r *http.Request) {
+	if !config.HTTPS.EnableCRL {
+		http.Error(w, "CRL not enabled", http.StatusNotFound)
+		return
+	}
+
+	// Serve the CRL file
+	http.ServeFile(w, r, config.CacheDirectory+"/crl.pem")
 }

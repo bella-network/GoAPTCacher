@@ -13,6 +13,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -365,4 +366,39 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 // genKeyPair generates a new private key
 func genKeyPair() (*ecdsa.PrivateKey, error) {
 	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+// GenerateCRL generates a Certificate Revocation List (CRL) for the issued
+// certificates. This list will always be empty.
+func (c *Intercept) GenerateCRL(crlAddress, path string) error {
+	// Prepare empty revoked certificates list
+	revoked := []pkix.RevokedCertificate{}
+
+	now := time.Now()
+	nextUpdate := now.AddDate(0, 0, 8)
+
+	crlBytes, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+		SignatureAlgorithm:  c.publicKey.SignatureAlgorithm,
+		Issuer:              c.publicKey.Subject,
+		ThisUpdate:          now,
+		NextUpdate:          nextUpdate,
+		RevokedCertificates: revoked,
+		Number:              big.NewInt(now.Unix()),
+	}, c.publicKey, c.privateKey)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Store the file in DER format
+	if _, err := file.Write(crlBytes); err != nil {
+		return err
+	}
+
+	return nil
 }
