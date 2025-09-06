@@ -250,25 +250,22 @@ func (c *Intercept) CreateCertificate(domain string) error {
 	return nil
 }
 
-// GC checks if a issued certificate is valid for less than 2 minutes and deletes it
+// GC removes expired and nearly expired certificates from the storage
 func (c *Intercept) GC() {
 	c.certStorage.mutex.Lock()
 	defer c.certStorage.mutex.Unlock()
 
-	// Count the number of certificates before
-	records := len(c.certStorage.Certificates)
-
-	// Check if any certificate is valid for less than 2 minutes. If so, delete
-	// it from the certificate storage.
+	var toDelete []string
 	for domain, cert := range c.certStorage.Certificates {
-		if time.Until(cert.Expires).Minutes() <= 2 {
-			log.Println("CertificateStorage GC: Removing", domain, "from generated certificates")
-			delete(c.certStorage.Certificates, domain)
+		if time.Until(cert.Expires) <= 2*time.Minute {
+			toDelete = append(toDelete, domain)
 		}
 	}
-
-	// DEBUG: Log the number of certificates removed
-	log.Printf("CertificateStorage GC: Removed %d certificates from %d", records-len(c.certStorage.Certificates), records)
+	for _, domain := range toDelete {
+		log.Println("CertificateStorage GC: Removing", domain, "from generated certificates")
+		delete(c.certStorage.Certificates, domain)
+	}
+	log.Printf("CertificateStorage GC: Removed %d certificates, %d remain", len(toDelete), len(c.certStorage.Certificates))
 }
 
 // returnCert is called by TLS server including provided SNI name
