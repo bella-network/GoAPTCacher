@@ -72,7 +72,7 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 		return nil, err
 	}
 
-	return createIntercept(parsedPublicKey, privateKey, rootCA), nil
+	return createIntercept(parsedPublicKey, privateKey, rootCA)
 }
 
 // parsePublicKey parses the provided public key and returns an x509.Certificate
@@ -136,7 +136,7 @@ func parseRootCA(newRootCAPublicKey []byte) (*x509.Certificate, error) {
 
 // createIntercept creates a new Intercept object with the provided public key,
 // private key, and root CA public key
-func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, rootCA *x509.Certificate) *Intercept {
+func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, rootCA *x509.Certificate) (*Intercept, error) {
 	intercept := &Intercept{
 		publicKey: parsedPublicKey,
 		rootCA:    rootCA,
@@ -151,10 +151,10 @@ func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, 
 	case *rsa.PrivateKey:
 		intercept.privateKey = key
 	default:
-		return nil
+		return nil, errors.New("invalid private key type")
 	}
 
-	return intercept
+	return intercept, nil
 }
 
 // SetAIAAddress sets the Authority Information Access (AIA) URL for the issued
@@ -202,18 +202,18 @@ func (c *Intercept) GetCertificate(domain string) *tls.Certificate {
 func (c *certificateStorage) StartOperation(domain string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	c.Certificates[domain] = IssuedCertificate{
-		OperationInProgress: true,
-	}
+	cert := c.Certificates[domain]
+	cert.OperationInProgress = true
+	c.Certificates[domain] = cert
 }
 
 // EndOperation sets OperationInProgress to false to allow new issuance for existing domain
 func (c *certificateStorage) EndOperation(domain string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	c.Certificates[domain] = IssuedCertificate{
-		OperationInProgress: false,
-	}
+	cert := c.Certificates[domain]
+	cert.OperationInProgress = false
+	c.Certificates[domain] = cert
 }
 
 // IsInOperation returns if an operation for a given domain is active
@@ -232,15 +232,19 @@ func (c *Intercept) CreateCertificate(domain string) error {
 	}
 	c.certStorage.StartOperation(domain)
 
-	certificateCer, _ := c.generateProxyCertificate(domain)
+	certificateCer, err := c.generateProxyCertificate(domain)
+	if err != nil {
+		c.certStorage.EndOperation(domain)
+		return err
+	}
 
 	c.certStorage.mutex.Lock()
-	defer c.certStorage.mutex.Unlock()
 	c.certStorage.Certificates[domain] = IssuedCertificate{
 		Certificate:         certificateCer,
 		Expires:             certificateCer.Leaf.NotAfter,
 		OperationInProgress: false,
 	}
+	c.certStorage.mutex.Unlock()
 	log.Printf("Generated new certificate for %s", domain)
 
 	return nil
@@ -272,7 +276,7 @@ func (c *Intercept) ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate
 	domain := strings.ToLower(helloInfo.ServerName)
 	// If no SNI domain was found, use certificate for dns
 	if domain == "" {
-		domain = "httpsintercept"
+		domain = c.domain
 	}
 	log.Println("New incoming request for", domain)
 
@@ -282,97 +286,71 @@ func (c *Intercept) ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate
 
 // generateProxyCertificate generates a new certificate which is signed by an intermediate CA
 func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Certificate, error) {
-	// generate a unique and random serial number for certificate
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		log.Fatalf("Failed to generate serial number: %v", err)
+		log.Printf("Failed to generate serial number: %v", err)
+		return nil, err
 	}
 
-	// prefill certificate with generic fields
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: requestedHostname,
 		},
-
-		// certificate is valid from now -1 hour until now in 24 hours
-		NotBefore: time.Now().Add(time.Hour * -1),
-		NotAfter:  time.Now().Add(time.Hour * 24),
-
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		NotBefore: time.Now().Add(-1 * time.Hour),
+		NotAfter:  time.Now().Add(24 * time.Hour),
+		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
 		BasicConstraintsValid: true,
 	}
 
-	// If domain is set, add AIA extension to certificate to allow clients to
-	// download the intermediate certificate if missing.
 	if c.aiaAddress != "" {
 		template.IssuingCertificateURL = []string{c.aiaAddress}
 	}
-
-	// If CRL is enabled, add CRL Distribution Points to certificate
 	if c.crlAddress != "" {
 		template.CRLDistributionPoints = []string{c.crlAddress}
 	}
 
-	// detect if given domain is an IP address
-	// IPs do have a custom field for validation
-	// if it is not an IP address, assume it is a regular domain name
-	if addr := net.ParseIP(requestedHostname); addr != nil {
-		template.IPAddresses = append(template.IPAddresses, addr)
+	// Add SANs: requestedHostname (IP or DNS)
+	if ip := net.ParseIP(requestedHostname); ip != nil {
+		template.IPAddresses = append(template.IPAddresses, ip)
 	} else {
 		template.DNSNames = append(template.DNSNames, requestedHostname)
 	}
 
-	// Also if domain is set, add main domain to SANs
+	// Add c.domain to SANs, if gesetzt und noch nicht enthalten
 	if c.domain != "" {
-		// Given domain might be a IPv4 or IPv6 address. If this is the case, it needs to be added to IPAddresses
-		if addr := net.ParseIP(c.domain); addr != nil {
-			// Check if IP is already in list
-			var found bool
-			for _, ip := range template.IPAddresses {
-				if ip.Equal(addr) {
+		domain := c.domain
+		if strings.Contains(domain, ":") {
+			domain = strings.Split(domain, ":")[0]
+		}
+		if ip := net.ParseIP(domain); ip != nil {
+			found := false
+			for _, existing := range template.IPAddresses {
+				if existing.Equal(ip) {
 					found = true
 					break
 				}
 			}
-
 			if !found {
-				template.IPAddresses = append(template.IPAddresses, addr)
+				template.IPAddresses = append(template.IPAddresses, ip)
 			}
 		} else {
-			// Domain might be a domain:port combination or just a domain. Split domain and port
-			domainParts := strings.Split(c.domain, ":")
-			if len(domainParts) > 1 {
-				// Check if domain is already in list
-				var found bool
-				if slices.Contains(template.DNSNames, domainParts[0]) {
-					found = true
-				}
-				if !found {
-					template.DNSNames = append(template.DNSNames, domainParts[0])
-				}
-			} else {
-				// Check if domain is already in list
-				var found bool
-				if slices.Contains(template.DNSNames, c.domain) {
-					found = true
-				}
-				if !found {
-					template.DNSNames = append(template.DNSNames, c.domain)
-				}
+			if !slices.Contains(template.DNSNames, domain) {
+				template.DNSNames = append(template.DNSNames, domain)
 			}
 		}
 	}
 
-	// generate new private key
 	key, err := genKeyPair()
 	if err != nil {
 		return nil, err
 	}
 
-	// Load correct private key
 	var privKey any
 	if c.privateKeyEC != nil {
 		privKey = c.privateKeyEC
@@ -380,23 +358,21 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		privKey = c.privateKey
 	}
 
-	// issue certificate
 	x, err := x509.CreateCertificate(rand.Reader, &template, c.publicKey, key.Public(), privKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// create certificate container including new certificate, private key and chain
-	cert := new(tls.Certificate)
-	cert.Certificate = append(cert.Certificate, x)
-	cert.PrivateKey = key
+	cert := &tls.Certificate{
+		Certificate: [][]byte{x},
+		PrivateKey:  key,
+	}
 	cert.Leaf, _ = x509.ParseCertificate(x)
 
 	// add intermediate certificate to chain
 	cert.Certificate = append(cert.Certificate, c.publicKey.Raw)
 	cert.Leaf.Issuer = c.publicKey.Subject
 
-	// add root certificate to chain
 	if c.rootCA != nil {
 		cert.Certificate = append(cert.Certificate, c.rootCA.Raw)
 	}
