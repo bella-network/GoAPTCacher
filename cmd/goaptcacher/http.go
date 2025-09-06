@@ -48,6 +48,8 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 		httpServeSubpage(w, "setup")
 	case "/revocation.crl":
 		httpServeCRL(w, r)
+	case "/goaptcacher.crt":
+		httpServeCertificate(w, r)
 	default:
 		// Serve a 404 page
 		w.WriteHeader(http.StatusNotFound)
@@ -222,7 +224,7 @@ func httpPageStats() string {
 		TrafficDown uint64
 	}
 	var entryList []statsEntry
-	rows, err := db.Query("SELECT date, requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
+	rows, err := db.Query("SELECT DATE(date), requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
@@ -240,7 +242,7 @@ func httpPageStats() string {
 
 	// Get oldest date from the stats table
 	var oldestDate string
-	err = db.QueryRow("SELECT date FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
+	err = db.QueryRow("SELECT DATE(date) FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
@@ -425,4 +427,16 @@ func httpServeCRL(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the CRL file
 	http.ServeFile(w, r, config.CacheDirectory+"/crl.pem")
+}
+
+// httpServeCertificate serves the public certificate used for HTTPS
+// interception when requested through AIA.
+func httpServeCertificate(w http.ResponseWriter, r *http.Request) {
+	if !config.HTTPS.Intercept {
+		http.Error(w, "HTTPS interception not enabled", http.StatusNotFound)
+		return
+	}
+
+	// Serve the public certificate file
+	http.ServeFile(w, r, config.HTTPS.CertificatePublicKey)
 }

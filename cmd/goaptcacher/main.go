@@ -133,6 +133,8 @@ func main() {
 		// If available, set AIA Address
 		if config.HTTPS.AIAAddress != "" {
 			intercept.SetAIAAddress(config.HTTPS.AIAAddress)
+		} else if config.HTTPS.CertificateDomain != "" {
+			intercept.SetAIAAddress(fmt.Sprintf("http://%s:%d/_goaptcacher/goaptcacher.crt", config.HTTPS.CertificateDomain, config.ListenPort))
 		}
 
 		// Run periodic cleanup of expired certificates
