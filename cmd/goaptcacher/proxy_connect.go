@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 )
 
 // handleCONNECT handles HTTPS CONNECT requests of clients which want to fetch a
@@ -67,6 +68,16 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 
 	tlsConn := tls.Server(clientConn, tlsConfig)
 	defer tlsConn.Close()
+
+	// Versuche TLS-Handshake und erkenne Zertifikatsfehler
+	if err := tlsConn.Handshake(); err != nil {
+		if strings.Contains(err.Error(), "unknown certificate") || strings.Contains(err.Error(), "certificate") || strings.Contains(err.Error(), "alert") {
+			log.Printf("[TLS-ALERT] Client %s has aborted the TLS-connection due to a certificate error: %v", r.RemoteAddr, err)
+		} else {
+			log.Printf("[TLS-ERROR] TLS-Handshake with client %s failed: %v", r.RemoteAddr, err)
+		}
+		return
+	}
 
 	// Create a buffered reader for the client connection; this is required to
 	// use http package functions with this connection.

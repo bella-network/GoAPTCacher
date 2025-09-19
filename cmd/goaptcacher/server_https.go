@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,10 @@ func ListenHTTPS() {
 	log.Printf("[INFO] Starting proxy server on port %d\n", config.ListenPortSecure)
 	err = server.Serve(ln)
 	if err != nil {
-		log.Fatal("Web server (HTTPS): ", err)
+		if strings.Contains(err.Error(), "tls: ") || strings.Contains(err.Error(), "alert") {
+			log.Printf("[TLS-ALERT] A client has aborted the TLS-connection due to a certificate error: %v", err)
+		} else {
+			log.Fatal("Web server (HTTPS): ", err)
+		}
 	}
 }
