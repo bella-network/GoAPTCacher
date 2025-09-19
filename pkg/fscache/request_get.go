@@ -14,6 +14,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// hopByHopHeaders lists headers that must not be forwarded to the client when
+// proxying a request. These are defined by RFC 9110 section 7.6.1.
+var hopByHopHeaders = map[string]struct{}{
+	"Connection":          {},
+	"Proxy-Connection":    {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
 // serveGETRequest is the basic function to serve a GET request for a client.
 func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	protocol := DetermineProtocolFromURL(r.URL)
@@ -25,6 +39,21 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	// Check the access cache for the requested file
 	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
+		localPath := c.buildLocalPath(r.URL)
+		if info, err := os.Stat(localPath); err != nil || (lastAccess.Size > 0 && info.Size() != lastAccess.Size) {
+			if err != nil {
+				if !os.IsNotExist(err) {
+					log.Printf("[WARN:GET:STALE] %s%s stat failed: %v\n", r.URL.Host, r.URL.Path, err)
+				}
+			} else {
+				log.Printf("[WARN:GET:STALE] %s%s size mismatch: expected %d bytes, got %d\n", r.URL.Host, r.URL.Path, lastAccess.Size, info.Size())
+			}
+			c.Delete(protocol, r.URL.Host, r.URL.Path)
+			_ = os.Remove(localPath)
+			c.serveGETRequestCacheMiss(r, w, 0)
+			return
+		}
+
 		// Remove the port from remote address if it is present
 		remoteAddr := r.RemoteAddr
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -199,6 +228,9 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
+	// Forward headers from the upstream response before streaming the body.
+	copyResponseHeaders(w.Header(), resp.Header)
+
 	// Set header that describes the cache hit
 	w.Header().Set("X-Cache", "MISS")
 
@@ -215,6 +247,9 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		w.Header().Set("ETag", eTag)
 	}
 
+	// Write the response status now that headers are populated.
+	w.WriteHeader(resp.StatusCode)
+
 	// Create the cache directory if it does not exist
 	err = os.MkdirAll(filepath.Dir(c.buildLocalPath(r.URL)), 0755)
 	if err != nil {
@@ -224,11 +259,19 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	// Create a UUID for the file to prevent conflicts with other downloads
 	randomName := uuid.New().String()
+	targetPath := c.buildLocalPath(r.URL)
+	tempPath := targetPath + "." + randomName + ".partial"
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	// Write the file to the cache asynchronously so the response to the
 	// client is not limited by disk throughput. A small buffer is used to
 	// prevent unbounded memory usage while still decoupling the disk write.
-	file, err := os.Create(c.buildLocalPath(r.URL) + randomName)
+	file, err := os.Create(tempPath)
 	if err != nil {
 		log.Printf("Error creating file: %v\n", err)
 		return
@@ -247,14 +290,12 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	}
 	if err != nil {
 		log.Printf("Error writing file: %v\n", err)
-		os.Remove(c.buildLocalPath(r.URL))
 		return
 	}
 
 	// Check if the number of bytes written matches the Content-Length header
 	if resp.ContentLength > 0 && resp.ContentLength != bw {
 		log.Printf("Error writing file: expected %d bytes, got %d\n", resp.ContentLength, bw)
-		os.Remove(c.buildLocalPath(r.URL))
 		return
 	}
 
@@ -270,7 +311,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	}
 
 	// Generate SHA256 hash of the downloaded file
-	hash, err := GenerateSHA256Hash(c.buildLocalPath(r.URL) + randomName)
+	hash, err := GenerateSHA256Hash(tempPath)
 	if err != nil {
 		log.Printf("Error generating SHA256 hash: %v\n", err)
 		http.Error(w, "Error generating file hash", http.StatusInternalServerError)
@@ -278,12 +319,13 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	}
 
 	// Rename the file to its final name
-	err = os.Rename(c.buildLocalPath(r.URL)+randomName, c.buildLocalPath(r.URL))
+	err = os.Rename(tempPath, targetPath)
 	if err != nil {
 		log.Printf("Error renaming file: %v\n", err)
 		http.Error(w, "Error renaming file", http.StatusInternalServerError)
 		return
 	}
+	cleanupTemp = false
 
 	// Update the access cache with the new file
 	if err := c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
@@ -300,6 +342,19 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	log.Printf("[INFO:DL:CREATED] %s%s - Wrote %d bytes\n", r.URL.Host, r.URL.Path, bw)
 	go c.TrackRequest(false, bw)
+}
+
+// copyResponseHeaders copies response headers from src to dst while stripping
+// hop-by-hop headers that must be handled locally by this proxy.
+func copyResponseHeaders(dst, src http.Header) {
+	for key, values := range src {
+		if _, skip := hopByHopHeaders[http.CanonicalHeaderKey(key)]; skip {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
 }
 
 // GenerateSHA256Hash generates a SHA256 hash of the file at the given path.

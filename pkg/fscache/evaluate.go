@@ -1,6 +1,7 @@
 package fscache
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -216,14 +217,22 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// necessary to avoid overwriting the old file while it is still being
 	// downloaded and to ensure that the file is only replaced once the download is
 	// complete.
-	uuid, err := uuid.NewRandom()
+	tmpID, err := uuid.NewRandom()
 	if err != nil {
 		log.Printf("[ERROR:REFRESH:RANDOM] %s\n", err)
 		return false, err
 	}
 
+	tempPath := generatedName + "-dl-" + tmpID.String()
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
 	// Create the file
-	file, err := os.Create(generatedName + "-dl-" + uuid.String())
+	file, err := os.Create(tempPath)
 	if err != nil {
 		log.Printf("[ERROR:REFRESH:CREATE] %s\n", err)
 		return false, err
@@ -238,22 +247,36 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 		return false, err
 	}
 
-	err = file.Close()
-	if err != nil {
+	if err := file.Close(); err != nil {
 		log.Printf("[ERROR:REFRESH:CLOSE] %s\n", err)
 		return false, err
 	}
 
-	// Rename the file and overwrite the old file
-	err = os.Rename(generatedName+"-dl-"+uuid.String(), generatedName)
-	if err != nil {
-		log.Printf("[ERROR:REFRESH:RENAME] %s\n", err)
+	if resp.ContentLength > 0 && resp.ContentLength != wrb {
+		err := fmt.Errorf("downloaded size mismatch: expected %d bytes, got %d", resp.ContentLength, wrb)
+		log.Printf("[ERROR:REFRESH:LENGTH] %s\n", err)
 		return false, err
 	}
 
+	newHash, err := GenerateSHA256Hash(tempPath)
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:HASH] %s\n", err)
+		return false, err
+	}
+
+	// Rename the file and overwrite the old file
+	if err := os.Rename(tempPath, generatedName); err != nil {
+		log.Printf("[ERROR:REFRESH:RENAME] %s\n", err)
+		return false, err
+	}
+	cleanupTemp = false
+
 	// Update the access cache with the new file
 	c.UpdateFile(protocol, localFile.Host, localFile.Path, lastAccess.URL.String(), lastModified, etag, wrb)
-	go c.TrackRequest(false, lastAccess.Size)
+	if err := c.SetSHA256(protocol, localFile.Host, localFile.Path, newHash); err != nil {
+		log.Printf("[ERROR:REFRESH:SHA256] %s\n", err)
+	}
+	go c.TrackRequest(false, wrb)
 
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 
