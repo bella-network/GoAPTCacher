@@ -80,13 +80,15 @@ nfpms:
       - src: config.yaml-example
         dst: /etc/goaptcacher/config.yaml
 
+    section: net
+    priority: optional
+    recommends:
+      - "mariadb-server | mysql-server"
+
+
     deb:
-      section: net
-      priority: optional
       fields:
         Bugs: https://gitlab.com/bella.network/goaptcacher/issues
-      recommends:
-        - "mariadb-server | mysql-server"
       compression: zstd
 
     scripts:
