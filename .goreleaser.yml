@@ -97,6 +97,6 @@ nfpms:
       postremove: "source/postrm.sh"
 
 gitlab_urls:
-  use_package_registry: true
+  use_package_registry: false
 
 report_sizes: true
