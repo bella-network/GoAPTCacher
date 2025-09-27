@@ -228,6 +228,24 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
+	targetPath := c.buildLocalPath(r.URL)
+
+	// Create the cache directory if it does not exist
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		log.Printf("Error creating cache directory: %v\n", err)
+		http.Error(w, "Error creating cache directory", http.StatusInternalServerError)
+		return
+	}
+
+	requiredSize := resp.ContentLength
+	if requiredSize > 0 {
+		if err := ensureDiskSpace(targetPath, requiredSize); err != nil {
+			log.Printf("Error reserving disk space for %s%s: %v\n", r.URL.Host, r.URL.Path, err)
+			http.Error(w, "Insufficient storage on cache server", http.StatusInsufficientStorage)
+			return
+		}
+	}
+
 	// Forward headers from the upstream response before streaming the body.
 	copyResponseHeaders(w.Header(), resp.Header)
 
@@ -247,19 +265,8 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		w.Header().Set("ETag", eTag)
 	}
 
-	// Write the response status now that headers are populated.
-	w.WriteHeader(resp.StatusCode)
-
-	// Create the cache directory if it does not exist
-	err = os.MkdirAll(filepath.Dir(c.buildLocalPath(r.URL)), 0755)
-	if err != nil {
-		log.Printf("Error creating cache directory: %v\n", err)
-		return
-	}
-
 	// Create a UUID for the file to prevent conflicts with other downloads
 	randomName := uuid.New().String()
-	targetPath := c.buildLocalPath(r.URL)
 	tempPath := targetPath + "." + randomName + ".partial"
 	cleanupTemp := true
 	defer func() {
@@ -276,6 +283,16 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		log.Printf("Error creating file: %v\n", err)
 		return
 	}
+
+	if err := preallocateFile(file, requiredSize); err != nil {
+		log.Printf("Error preallocating file: %v\n", err)
+		file.Close()
+		http.Error(w, "Error reserving storage", http.StatusInternalServerError)
+		return
+	}
+
+	// Write the response status now that headers are populated and storage is reserved.
+	w.WriteHeader(resp.StatusCode)
 
 	// Create an async file writer that writes to the file with a buffer size of
 	// 32KB This allows the file to be written asynchronously while still being

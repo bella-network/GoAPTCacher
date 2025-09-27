@@ -213,6 +213,14 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// At this point, we know that the file has changed. We need to download the
 	// new file and update the cache.
 
+	requiredSize := resp.ContentLength
+	if requiredSize > 0 {
+		if err := ensureDiskSpace(generatedName, requiredSize); err != nil {
+			log.Printf("[ERROR:REFRESH:DISK] %s %s\n", generatedName, err)
+			return false, err
+		}
+	}
+
 	// Generate a temporary filename to download the file to. This is
 	// necessary to avoid overwriting the old file while it is still being
 	// downloaded and to ensure that the file is only replaced once the download is
@@ -235,6 +243,12 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	file, err := os.Create(tempPath)
 	if err != nil {
 		log.Printf("[ERROR:REFRESH:CREATE] %s\n", err)
+		return false, err
+	}
+
+	if err := preallocateFile(file, requiredSize); err != nil {
+		log.Printf("[ERROR:REFRESH:PREALLOCATE] %s\n", err)
+		file.Close()
 		return false, err
 	}
 
