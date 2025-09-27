@@ -103,7 +103,6 @@ release:
     expire_in: 1 week
     paths:
       - dist/*.deb
-      - dist/*/*.deb
 
 publish:aptly:
   stage: publish

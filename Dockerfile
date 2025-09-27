@@ -1,7 +1,7 @@
 FROM debian:stable-slim AS base
 
 RUN apt-get update && apt-get install -y \
-	ca-certificates tzdata
+	ca-certificates tzdata adduser
 
 RUN adduser \
 	--disabled-password \
