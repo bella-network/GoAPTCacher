@@ -21,6 +21,27 @@ GoAPTCacher is a pull-through apt cacher similar to apt-cacher-ng and squid with
 
 The source within the branch main always contains the latest changes and is considered the preview build. This build is not recommended for production use as it may contain bugs and other issues. The preview build is intended for testing and evaluation purposes only. The main branch is designed to be executable and functional at all times in order to be able to test new functions as quickly as possible.
 
+### APT Repository
+
+GoAPTCacher can be installed by apt using the APT repository hosted on repo.bella.network. A configuration guide can be found on [https://repo.bella.network/](https://repo.bella.network/).
+
+```bash
+# Add the APT repository
+echo "Types: deb
+URIs: https://repo.bella.network/deb
+Suites: stable
+Components: main
+Architectures: amd64 arm64
+Signed-By: /usr/share/keyrings/bella-archive-keyring.gpg
+" | sudo tee /etc/apt/sources.list.d/bella.sources
+
+# Add the repository key
+curl -fsSL https://repo.bella.network/_static/bella-archive-keyring.gpg | sudo tee /usr/share/keyrings/bella-archive-keyring.gpg > /dev/null
+
+# Update the package list and install GoAPTCacher
+sudo apt update; sudo apt install goaptcacher
+```
+
 ## What this program does
 
 This program is a pull-through apt cacher similar to apt-cacher-ng and squid with local file cache. It is designed to be used in isolated environments and CI/CD pipelines to speed up package downloads and reduce the load on the package mirrors. It caches only the packages that were requested by clients and stores them in a local directory to avoid re-downloading. It serves packages over HTTP and HTTPS and supports on-the-fly certificate generation. It also supports multiple package mirrors, HTTPS-passthrough, proxy support, SRV record support, and URL rewriting. It provides a web interface to view cache statistics and configuration details.
