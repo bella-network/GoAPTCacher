@@ -5,6 +5,7 @@ stages:
   - analysis
 #  - build
   - release
+  - publish
 
 # Test formatting, suspicious constructs and predefined tests. Creates code coverage statistics and saves a HTML coverage report to coverage/
 test:
@@ -96,3 +97,34 @@ release:
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - goreleaser release --clean
+  artifacts:
+    name: "dist-$CI_COMMIT_TAG"
+    when: always
+    expire_in: 1 week
+    paths:
+      - dist/*.deb
+      - dist/*/*.deb
+
+publish:aptly:
+  stage: publish
+  image: debian:trixie-slim
+  needs: ["build:release"]
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends openssh-client ca-certificates
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - >/dev/null
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ls -l dist || true
+    - mkdir -p outdeb && find dist -type f -name "*.deb" -print -exec cp {} outdeb/ \;
+    - test -n "$(ls -1 outdeb/*.deb 2>/dev/null)" || { echo "No .deb found"; exit 3; }
+    - tar -C outdeb -czf debs.tar.gz .
+    - scp debs.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/debs.tar.gz"
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf /tmp/debs && mkdir -p /tmp/debs && tar -C /tmp/debs -xzf /tmp/debs.tar.gz"
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "/var/vhosts/bella.network/repo/publish.sh '/tmp/debs/*.deb' '$GPG_KEY_ID'"
+  rules:
+    - if: '$CI_COMMIT_TAG'      # nur auf Tags veröffentlichen
+    - when: never
+  environment:
+    name: production
