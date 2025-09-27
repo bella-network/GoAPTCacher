@@ -108,7 +108,7 @@ release:
 publish:aptly:
   stage: publish
   image: debian:trixie-slim
-  needs: ["build:release"]
+  needs: ["release"]
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends openssh-client ca-certificates
     - eval $(ssh-agent -s)
@@ -124,7 +124,7 @@ publish:aptly:
     - ssh "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf /tmp/debs && mkdir -p /tmp/debs && tar -C /tmp/debs -xzf /tmp/debs.tar.gz"
     - ssh "$DEPLOY_USER@$DEPLOY_HOST" "/var/vhosts/bella.network/repo/publish.sh '/tmp/debs/*.deb' '$GPG_KEY_ID'"
   rules:
-    - if: '$CI_COMMIT_TAG'      # nur auf Tags veröffentlichen
+    - if: '$CI_COMMIT_TAG'
     - when: never
   environment:
     name: production
