@@ -184,7 +184,7 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 		return
 	}
 
-	err = temp.Execute(w, map[string]interface{}{
+	err = temp.Execute(w, map[string]any{
 		"Title":   title,
 		"Content": pageContent,
 		"Const":   helperHTTPConstants(),
@@ -286,9 +286,14 @@ func httpPageStats() string {
 				<th>Traffic fetched</th>
 			</tr>`
 	for _, entry := range entryList {
+		// Parse date from 2025-09-21T00:00:00Z format
+		dateParsed, err := time.Parse("2006-01-02T15:04:05Z", entry.Date)
+		if err != nil {
+			log.Printf("[ERROR:WEB] Error parsing date: %s\n", err)
+		}
 		response += fmt.Sprintf(
 			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d</td><td>%s</td><td>%s (%d%%)</td></tr>",
-			entry.Date,
+			dateParsed.Format("2006-01-02"),
 			entry.Requests,
 			entry.Hits,
 			100*entry.Hits/entry.Requests,
