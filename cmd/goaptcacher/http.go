@@ -66,7 +66,7 @@ func helperHTTPConstants() map[string]any {
 		"ListenPort":       config.ListenPort,
 		"ListenPortSecure": config.ListenPortSecure,
 		"Domains":          config.Domains,
-		"Version":          "0.0.1",
+		"Version":          version,
 	}
 }
 

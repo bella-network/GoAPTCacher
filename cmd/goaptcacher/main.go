@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -12,13 +13,52 @@ import (
 	"gitlab.com/bella.network/goaptcacher/pkg/odb"
 )
 
+// Version information
+var (
+	version = "0.0.0-DEBUG" // Current git tag with tripped "v" prefix
+	commit  = "unknown"     // Current git commit hash SHA
+	date    = "unknown"     // Build date in RFC3339 format
+)
+
 var config *Config                      // Config struct holding the configuration values
 var loadedDomains uint64                // Number of loaded domains
 var cache *fscache.FSCache              // Cache object used to store cached files
 var intercept *httpsintercept.Intercept // Intercept object used to handle HTTPS interception
 var db *odb.DBConnection                // Database connection object used to access the database
 
+func printHelp() {
+	fmt.Println("goaptcacher - APT caching proxy")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  goaptcacher [options]")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -v, --version        Print version and exit")
+	fmt.Println("  -h, --help           Show this help message and exit")
+	fmt.Println("  -c, --config <file>  Path to config file (default: ./config.yaml)")
+	// Hier können weitere Optionen ergänzt werden
+}
+
 func main() {
+	// Kommandozeilenoptionen definieren
+	showVersion := flag.Bool("v", false, "Print version and exit")
+	showHelp := flag.Bool("h", false, "Show help and exit")
+	configPath := flag.String("c", "", "Path to config file")
+	// Unterstützung für --version und --help
+	flag.BoolVar(showVersion, "version", false, "Print version and exit")
+	flag.BoolVar(showHelp, "help", false, "Show help and exit")
+	flag.StringVar(configPath, "config", "", "Path to config file")
+	flag.Parse()
+
+	if *showHelp {
+		printHelp()
+		os.Exit(0)
+	}
+	if *showVersion {
+		fmt.Printf("GoAPTCacher version %s, commit %s, built at %s\n", version, commit, date)
+		os.Exit(0)
+	}
+
 	// Detect if the program is launched by systemd, in that case only print
 	// reduced logs.
 	if os.Getenv("INVOCATION_ID") != "" {
@@ -30,14 +70,17 @@ func main() {
 	log.Println("[INFO] Starting goaptcacher")
 
 	// Check if envorinment variable is set with the path to the config file
-	configPath := os.Getenv("CONFIG")
-	if configPath == "" {
-		configPath = "./config.yaml"
+	// Priorität: Kommandozeilenoption > ENV > Default
+	if *configPath == "" {
+		*configPath = os.Getenv("CONFIG")
+	}
+	if *configPath == "" {
+		*configPath = "./config.yaml"
 	}
 
 	// Read the config file
 	var err error
-	config, err = ReadConfig(configPath)
+	config, err = ReadConfig(*configPath)
 	if err != nil {
 		log.Fatal("Error reading config file: ", err)
 	}
