@@ -189,16 +189,18 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 
 	// Check if the file has changed. For this, we compare the Last-Modified
 	// header and the ETag header with the last known values. If Last-Modified
-	// is older than the locally stored file, we assume the file has not changed.
-	lastModified, err := time.Parse(http.TimeFormat, resp.Header.Get("Last-Modified"))
-	if err != nil {
-		lastModified = time.Time{}
-	}
-	if lastModified.Before(lastAccess.RemoteLastModified) {
-		// Update the last checked time
-		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
-		log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
-		return false, nil
+	// is older than the locally stored file, we assume the file has not
+	// changed. Only perform this check if the Last-Modified header is
+	// available.
+	var lastModified time.Time
+	if lastmod := resp.Header.Get("Last-Modified"); lastmod != "" && !lastAccess.RemoteLastModified.IsZero() {
+		lastModified, err := time.Parse(http.TimeFormat, lastmod)
+		if err == nil && lastModified.Before(lastAccess.RemoteLastModified) {
+			// Update the last checked time
+			c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+			log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
+			return false, nil
+		}
 	}
 
 	// Check if the ETag has changed
@@ -212,7 +214,6 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 
 	// At this point, we know that the file has changed. We need to download the
 	// new file and update the cache.
-
 	requiredSize := resp.ContentLength
 	if requiredSize > 0 {
 		if err := ensureDiskSpace(generatedName, requiredSize); err != nil {
