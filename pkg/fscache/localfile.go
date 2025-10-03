@@ -13,6 +13,11 @@ func (c *FSCache) DeleteFile(file *url.URL) error {
 	// Delete the file
 	err := os.Remove(localPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// File does not exist, delete the database entry anyway
+			c.Delete(DetermineProtocolFromURL(file), file.Host, file.Path)
+			return nil
+		}
 		return err
 	}
 
