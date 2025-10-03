@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"gitlab.com/bella.network/goaptcacher/lib/web"
 )
 
 // handleRequest is the main handler function for incoming HTTP requests. It
@@ -33,8 +35,10 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		switch r.URL.Path {
 		case "/favicon.ico":
-			// Serve a 404 page not providing a favicon.
-			w.WriteHeader(http.StatusNotFound)
+			// Serve a favicon for the proxy server.
+			w.Header().Set("Content-Type", "image/x-icon")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(web.Favicon)
 			return
 		case "/robots.txt":
 			// Forbid all robots from indexing the proxy server.

@@ -12,6 +12,9 @@ var MainPage []byte
 //go:embed web/style.css
 var Style []byte
 
+//go:embed web/favicon.ico
+var Favicon []byte
+
 var tpl *template.Template
 
 // GetTemplate returns the template for the given template name.
