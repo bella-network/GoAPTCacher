@@ -10,6 +10,11 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - "-s -w"
+      - "-X gitlab.com/bella.network/goaptcacher/pkg/buildinfo.Version={{ .Version }}"
+      - "-X gitlab.com/bella.network/goaptcacher/pkg/buildinfo.Commit={{ .FullCommit }}"
+      - "-X gitlab.com/bella.network/goaptcacher/pkg/buildinfo.Date={{ .Date }}"
 
 changelog:
   use: gitlab

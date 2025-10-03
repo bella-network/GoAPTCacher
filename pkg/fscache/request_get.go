@@ -3,6 +3,7 @@ package fscache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
 
 // hopByHopHeaders lists headers that must not be forwarded to the client when
@@ -205,6 +208,10 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 			if key == "If-Modified-Since" || key == "If-None-Match" || key == "E-Tag" {
 				continue
 			}
+			// Skip hop-by-hop headers as these are handled by the proxy
+			if _, skip := hopByHopHeaders[http.CanonicalHeaderKey(key)]; skip {
+				continue
+			}
 
 			req.Header.Add(key, value)
 		}
@@ -212,7 +219,10 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	// Add a header to indicate that the request is coming from the cache
 	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	req.Header.Set("X-Proxy-Server", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
+	req.Header.Set(
+		"X-Proxy-Server",
+		fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version),
+	)
 
 	// Send the request to the original source
 	resp, err := c.client.Do(req)

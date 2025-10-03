@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
 
 var RefreshFiles = []string{
@@ -136,7 +137,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	}
 
 	// Add header to identify the client
-	req.Header.Set("User-Agent", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
+	req.Header.Set("User-Agent", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
 	req.Header.Set("X-ACTION", "refresh")
 
 	// If ETag is available, add it to the request

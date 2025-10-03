@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
 
 // downloadFileSimple downloads a file from the internet and saves it to the
@@ -17,7 +19,7 @@ func (c *FSCache) downloadFileSimple(url string, localPath string) error {
 	}
 
 	// Add the user agent to the request
-	req.Header.Add("User-Agent", "GoAptCacher/1.0 (+https://gitlab.com/bella.network/goaptcacher)")
+	req.Header.Add("User-Agent", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
 
 	// Send the request
 	resp, err := c.client.Do(req)

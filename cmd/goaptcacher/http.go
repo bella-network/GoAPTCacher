@@ -11,6 +11,7 @@ import (
 	"time"
 
 	web "gitlab.com/bella.network/goaptcacher/lib/web"
+	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
 
 // handleIndexRequests is the handler function for requests to the index page of
@@ -66,7 +67,7 @@ func helperHTTPConstants() map[string]any {
 		"ListenPort":       config.ListenPort,
 		"ListenPortSecure": config.ListenPortSecure,
 		"Domains":          config.Domains,
-		"Version":          version,
+		"Version":          buildinfo.Version,
 	}
 }
 

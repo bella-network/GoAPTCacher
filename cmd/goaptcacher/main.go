@@ -8,16 +8,10 @@ import (
 	"time"
 
 	"gitlab.com/bella.network/goaptcacher/lib/dbc"
+	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 	"gitlab.com/bella.network/goaptcacher/pkg/fscache"
 	"gitlab.com/bella.network/goaptcacher/pkg/httpsintercept"
 	"gitlab.com/bella.network/goaptcacher/pkg/odb"
-)
-
-// Version information
-var (
-	version = "0.0.0-DEBUG" // Current git tag with tripped "v" prefix
-	commit  = "unknown"     // Current git commit hash SHA
-	date    = "unknown"     // Build date in RFC3339 format
 )
 
 var config *Config                      // Config struct holding the configuration values
@@ -55,7 +49,12 @@ func main() {
 		os.Exit(0)
 	}
 	if *showVersion {
-		fmt.Printf("GoAPTCacher version %s, commit %s, built at %s\n", version, commit, date)
+		fmt.Printf(
+			"GoAPTCacher version %s, commit %s, built at %s\n",
+			buildinfo.Version,
+			buildinfo.Commit,
+			buildinfo.Date,
+		)
 		os.Exit(0)
 	}
 
