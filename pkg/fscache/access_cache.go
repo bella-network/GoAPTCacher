@@ -39,9 +39,9 @@ func (fs *FSCache) Get(protocol int, domain, path string) (AccessEntry, bool) {
 		return AccessEntry{}, false
 	}
 
-	entry.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
-	entry.LastChecked, _ = time.Parse(time.RFC3339, lastChecked)
-	entry.RemoteLastModified, _ = time.Parse(time.RFC3339, remoteLastModified)
+	entry.LastAccessed, _ = time.Parse(time.DateTime, lastAccessed)
+	entry.LastChecked, _ = time.Parse(time.DateTime, lastChecked)
+	entry.RemoteLastModified, _ = time.Parse(time.DateTime, remoteLastModified)
 	if entry.RemoteLastModified.IsZero() {
 		entry.RemoteLastModified = entry.LastAccessed
 	}

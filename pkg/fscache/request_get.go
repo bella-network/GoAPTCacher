@@ -78,7 +78,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		}
 
 		// Add the Last-Modified header to the response
-		if !lastAccess.RemoteLastModified.IsZero() {
+		if !lastAccess.RemoteLastModified.IsZero() && lastAccess.RemoteLastModified.Year() > 2000 {
 			// Force the Last-Modified header to be in RFC1123 and GMT format as
 			// this is the format used by HTTP.
 			w.Header().Set("Last-Modified", lastAccess.RemoteLastModified.UTC().Format(time.RFC1123))
@@ -104,7 +104,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			}
 
 			// Check if the file has been modified since the If-Modified-Since header
-			if lastAccess.RemoteLastModified.Before(parsedTime) {
+			if !lastAccess.RemoteLastModified.IsZero() && lastAccess.RemoteLastModified.Before(parsedTime) && lastAccess.RemoteLastModified.Year() > 2000 {
 				w.WriteHeader(http.StatusNotModified)
 				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", remoteAddr, r.URL.Host, r.URL.Path)
 				go c.TrackRequest(true, 0)
