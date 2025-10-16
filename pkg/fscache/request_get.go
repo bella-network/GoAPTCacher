@@ -38,6 +38,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	// Set basic headers for the response
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Cache-Control", "public, max-age=900")
+	w.Header().Set("Server", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
 
 	// Check the access cache for the requested file
 	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
@@ -228,6 +229,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	resp, err := c.client.Do(req)
 	if err != nil {
 		http.Error(w, "Error fetching file", http.StatusInternalServerError)
+		log.Printf("[ERROR:GET:FETCH] %s%s - Error fetching file: %v\n", r.URL.Host, r.URL.Path, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -235,6 +237,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	// Check if the response status code is OK
 	if resp.StatusCode != http.StatusOK {
 		http.Error(w, "Error fetching file", http.StatusNotFound)
+		log.Printf("[ERROR:GET:STATUS:%d] %s%s - Error fetching file: received status code %d\n", resp.StatusCode, r.URL.Host, r.URL.Path, resp.StatusCode)
 		return
 	}
 
@@ -247,10 +250,14 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
+	// Ensure that there is enough disk space to store the file If
+	// Content-Length is not set, we cannot reserve space and just try to
+	// download the file. This might lead to a failed download if the disk is
+	// full.
 	requiredSize := resp.ContentLength
 	if requiredSize > 0 {
 		if err := ensureDiskSpace(targetPath, requiredSize); err != nil {
-			log.Printf("Error reserving disk space for %s%s: %v\n", r.URL.Host, r.URL.Path, err)
+			log.Printf("[ERROR:GET:DISK] Error reserving disk space for %s%s: %v\n", r.URL.Host, r.URL.Path, err)
 			http.Error(w, "Insufficient storage on cache server", http.StatusInsufficientStorage)
 			return
 		}
@@ -270,6 +277,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 			log.Printf("Invalid Last-Modified header: %s (%v)", lastModified, err)
 		}
 	}
+
 	// Set ETag header if available
 	if eTag := resp.Header.Get("ETag"); eTag != "" {
 		w.Header().Set("ETag", eTag)
@@ -294,11 +302,16 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 
-	if err := preallocateFile(file, requiredSize); err != nil {
-		log.Printf("Error preallocating file: %v\n", err)
-		file.Close()
-		http.Error(w, "Error reserving storage", http.StatusInternalServerError)
-		return
+	// Preallocate the file to the required size to prevent fragmentation and
+	// ensure that writes are atomic. This is only done if Content-Length is
+	// set.
+	if requiredSize > 0 {
+		if err := preallocateFile(file, requiredSize); err != nil {
+			log.Printf("Error preallocating file: %v\n", err)
+			file.Close()
+			http.Error(w, "Error reserving storage", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Write the response status now that headers are populated and storage is reserved.
