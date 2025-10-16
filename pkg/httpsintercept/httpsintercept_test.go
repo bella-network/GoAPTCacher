@@ -1,312 +1,555 @@
 package httpsintercept
 
 import (
+	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"math/big"
+	"os"
+	"slices"
 	"testing"
 	"time"
 )
 
-// generateTestKeys generates a new RSA private key and self-signed certificate
-func generateTestKeys() ([]byte, []byte, []byte, error) {
-	// Generate a new RSA private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+type testCA struct {
+	certPEM []byte
+	keyPEM  []byte
+	cert    *x509.Certificate
+	key     crypto.Signer
+}
+
+func newTestCA(t *testing.T, algorithm string, parent *testCA) *testCA {
+	t.Helper()
+
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
-		return nil, nil, nil, err
+		t.Fatalf("failed to create serial: %v", err)
 	}
 
-	// Create a self-signed certificate
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
+	template := &x509.Certificate{
+		SerialNumber: serial,
 		Subject: pkix.Name{
-			Organization: []string{"Test Org"},
+			CommonName: fmt.Sprintf("Test CA %s", algorithm),
 		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(48 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
 	}
 
-	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	var key crypto.Signer
+	switch algorithm {
+	case "rsa":
+		keyRSA, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("failed to generate rsa key: %v", err)
+		}
+		key = keyRSA
+	case "ecdsa":
+		keyECDSA, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("failed to generate ecdsa key: %v", err)
+		}
+		key = keyECDSA
+	default:
+		t.Fatalf("unsupported algorithm %q", algorithm)
+	}
+
+	var parentCert *x509.Certificate
+	var parentKey crypto.Signer
+	if parent != nil {
+		parentCert = parent.cert
+		parentKey = parent.key
+		template.Issuer = parentCert.Subject
+	} else {
+		parentCert = template
+		parentKey = key
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, parentCert, key.Public(), parentKey)
 	if err != nil {
-		return nil, nil, nil, err
+		t.Fatalf("failed to create certificate: %v", err)
 	}
 
-	// Encode the private key and certificate to PEM format
-	privKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
-
-	return certPEM, privKeyPEM, certPEM, nil
-}
-
-// TestNew tests the New function
-func TestNew(t *testing.T) {
-	pubKey, privKey, rootCA, err := generateTestKeys()
+	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
+		t.Fatalf("failed to parse certificate: %v", err)
 	}
 
-	intercept, err := New(pubKey, privKey, "", rootCA)
-	if err != nil {
-		t.Fatalf("Failed to create Intercept: %v", err)
+	var keyDER []byte
+	var blockType string
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		keyDER = x509.MarshalPKCS1PrivateKey(k)
+		blockType = "RSA PRIVATE KEY"
+	case *ecdsa.PrivateKey:
+		keyDER, err = x509.MarshalECPrivateKey(k)
+		if err != nil {
+			t.Fatalf("failed to marshal ecdsa key: %v", err)
+		}
+		blockType = "EC PRIVATE KEY"
+	default:
+		t.Fatalf("unexpected key type %T", key)
 	}
 
-	if intercept.publicKey == nil || intercept.privateKey == nil || intercept.rootCA == nil {
-		t.Fatalf("Intercept object not initialized correctly")
-	}
-}
-
-// TestSetAIAAddress tests the SetAIAAddress function
-func TestSetAIAAddress(t *testing.T) {
-	pubKey, privKey, rootCA, err := generateTestKeys()
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
-
-	intercept, err := New(pubKey, privKey, "", rootCA)
-	if err != nil {
-		t.Fatalf("Failed to create Intercept: %v", err)
-	}
-
-	domain := "example.com"
-	intercept.SetAIAAddress(domain)
-
-	if intercept.aiaAddress != domain {
-		t.Fatalf("Expected domain %s, got %s", domain, intercept.aiaAddress)
-	}
-}
-
-// TestGetCertificate tests the GetCertificate function
-func TestGetCertificate(t *testing.T) {
-	pubKey, privKey, rootCA, err := generateTestKeys()
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
-
-	intercept, err := New(pubKey, privKey, "", rootCA)
-	if err != nil {
-		t.Fatalf("Failed to create Intercept: %v", err)
-	}
-
-	domain := "example.com"
-	cert := intercept.GetCertificate(domain)
-
-	if cert == nil {
-		t.Fatalf("Failed to get certificate for domain %s", domain)
+	return &testCA{
+		certPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		keyPEM:  pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: keyDER}),
+		cert:    cert,
+		key:     key,
 	}
 }
 
-// TestCreateCertificate tests the CreateCertificate function
-func TestCreateCertificate(t *testing.T) {
-	pubKey, privKey, rootCA, err := generateTestKeys()
+func pkcs8PEMFromKey(t *testing.T, key crypto.Signer) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
+		t.Fatalf("failed to marshal pkcs8: %v", err)
 	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
 
-	intercept, err := New(pubKey, privKey, "", rootCA)
+func encryptedPEMFromKey(t *testing.T, key crypto.Signer, password, blockType string) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		t.Fatalf("Failed to create Intercept: %v", err)
+		t.Fatalf("failed to marshal pkcs8: %v", err)
 	}
-
-	domain := "example.com"
-	err = intercept.CreateCertificate(domain)
+	block, err := x509.EncryptPEMBlock(rand.Reader, blockType, der, []byte(password), x509.PEMCipherAES256)
 	if err != nil {
-		t.Fatalf("Failed to create certificate for domain %s: %v", domain, err)
+		t.Fatalf("failed to encrypt pem block: %v", err)
 	}
+	return pem.EncodeToMemory(block)
+}
 
-	cert := intercept.GetCertificate(domain)
-	if cert == nil {
-		t.Fatalf("Failed to get certificate for domain %s", domain)
+func TestParsePublicKey(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+
+	got, err := parsePublicKey(ca.certPEM)
+	if err != nil {
+		t.Fatalf("parsePublicKey returned error: %v", err)
+	}
+	if !bytes.Equal(got.Raw, ca.cert.Raw) {
+		t.Fatalf("parsed certificate mismatch")
 	}
 }
 
-// generateTestECDSAKeys generates a new ECDSA private key and self-signed certificate
-func generateTestECDSAKeys() ([]byte, []byte, []byte, error) {
-	// Generate a new ECDSA private key
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Create a self-signed certificate
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization: []string{"Test Org"},
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-		},
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Encode the private key and certificate to PEM format
-	privKeyPEM, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	privKeyPEMBytes := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privKeyPEM})
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
-
-	return certPEM, privKeyPEMBytes, certPEM, nil
-}
-
-// TestNewECDSA tests the New function with ECDSA keys
-func TestNewECDSA(t *testing.T) {
-	pubKey, privKey, rootCA, err := generateTestECDSAKeys()
-	if err != nil {
-		t.Fatalf("Failed to generate test ECDSA keys: %v", err)
-	}
-
-	intercept, err := New(pubKey, privKey, "", rootCA)
-	if err != nil {
-		t.Fatalf("Failed to create Intercept with ECDSA keys: %v", err)
-	}
-
-	if intercept.publicKey == nil || intercept.privateKeyEC == nil || intercept.rootCA == nil {
-		t.Fatalf("Intercept object not initialized correctly with ECDSA keys")
+func TestParsePublicKeyInvalid(t *testing.T) {
+	_, err := parsePublicKey([]byte("not a certificate"))
+	if !errors.Is(err, ErrInvalidPublicKey) {
+		t.Fatalf("expected ErrInvalidPublicKey, got %v", err)
 	}
 }
 
-// TestNewInvalidPublicKey tests the New function with an invalid public key
-func TestNewInvalidPublicKey(t *testing.T) {
-	_, privKey, rootCA, err := generateTestKeys()
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
+func TestParsePrivateKeyRSA(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
 
-	_, err = New([]byte("invalid public key"), privKey, "", rootCA)
+	key, err := parsePrivateKey(ca.keyPEM, "")
+	if err != nil {
+		t.Fatalf("parsePrivateKey returned error: %v", err)
+	}
+	if _, ok := key.(*rsa.PrivateKey); !ok {
+		t.Fatalf("expected RSA private key, got %T", key)
+	}
+}
+
+func TestParsePrivateKeyECDSA(t *testing.T) {
+	ca := newTestCA(t, "ecdsa", nil)
+	pkcs8 := pkcs8PEMFromKey(t, ca.key)
+
+	key, err := parsePrivateKey(pkcs8, "")
+	if err != nil {
+		t.Fatalf("parsePrivateKey returned error: %v", err)
+	}
+	if _, ok := key.(*ecdsa.PrivateKey); !ok {
+		t.Fatalf("expected ECDSA private key, got %T", key)
+	}
+}
+
+func TestParsePrivateKeyEncrypted(t *testing.T) {
+	ca := newTestCA(t, "ecdsa", nil)
+	pemBytes := encryptedPEMFromKey(t, ca.key, "secret", "ENCRYPTED PRIVATE KEY")
+
+	key, err := parsePrivateKey(pemBytes, "secret")
+	if err != nil {
+		t.Fatalf("parsePrivateKey returned error: %v", err)
+	}
+	if _, ok := key.(*ecdsa.PrivateKey); !ok {
+		t.Fatalf("expected ECDSA private key, got %T", key)
+	}
+}
+
+func TestParsePrivateKeyUnsupportedEncryptedType(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	pemBytes := encryptedPEMFromKey(t, ca.key, "secret", "RSA PRIVATE KEY")
+
+	_, err := parsePrivateKey(pemBytes, "secret")
+	if !errors.Is(err, ErrInvalidPrivateKey) {
+		t.Fatalf("expected ErrInvalidPrivateKey, got %v", err)
+	}
+}
+
+func TestParsePrivateKeyInvalidData(t *testing.T) {
+	_, err := parsePrivateKey([]byte("bad data"), "")
 	if err == nil {
-		t.Fatalf("Expected error when creating Intercept with invalid public key")
+		t.Fatalf("expected error for invalid private key data")
 	}
 }
 
-// TestNewInvalidPrivateKey tests the New function with an invalid private key
-func TestNewInvalidPrivateKey(t *testing.T) {
-	pubKey, _, rootCA, err := generateTestKeys()
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
-
-	_, err = New(pubKey, []byte("invalid private key"), "", rootCA)
-	if err == nil {
-		t.Fatalf("Expected error when creating Intercept with invalid private key")
-	}
-}
-
-// generateEncryptedTestKeys generates a new RSA private key and self-signed certificate, and encrypts the private key
-func generateEncryptedTestKeys(password string) ([]byte, []byte, error) {
-	// Generate a new RSA private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Encrypt the private key
-	privKeyPEMBlock, err := x509.EncryptPEMBlock(rand.Reader, "ENCRYPTED PRIVATE KEY", x509.MarshalPKCS1PrivateKey(privateKey), []byte(password), x509.PEMCipherAES256)
-	if err != nil {
-		return nil, nil, err
-	}
-	privKeyPEM := pem.EncodeToMemory(privKeyPEMBlock)
-
-	return privKeyPEM, nil, nil
-}
-
-// TestParsePrivateKey tests the parsePrivateKey function
-func TestParsePrivateKey(t *testing.T) {
-	// Generate test keys
-	privKeyPEM, _, err := generateEncryptedTestKeys("password")
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
-
-	// Test parsing the private key
-	privateKey, err := parsePrivateKey(privKeyPEM, "password")
-	if err != nil {
-		t.Fatalf("Failed to parse private key: %v", err)
-	}
-
-	if privateKey == nil {
-		t.Fatalf("Expected private key, got nil")
-	}
-}
-
-// TestParsePrivateKeyInvalid tests the parsePrivateKey function with an invalid private key
-func TestParsePrivateKeyInvalid(t *testing.T) {
-	_, err := parsePrivateKey([]byte("invalid private key"), "password")
-	if err == nil {
-		t.Fatalf("Expected error when parsing invalid private key")
-	}
-}
-
-// TestParsePrivateKeyWrongPassword tests the parsePrivateKey function with a wrong password
 func TestParsePrivateKeyWrongPassword(t *testing.T) {
-	// Generate test keys
-	privKeyPEM, _, err := generateEncryptedTestKeys("password")
-	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
-	}
+	ca := newTestCA(t, "ecdsa", nil)
+	pemBytes := encryptedPEMFromKey(t, ca.key, "secret", "ENCRYPTED PRIVATE KEY")
 
-	// Test parsing the private key with a wrong password
-	_, err = parsePrivateKey(privKeyPEM, "wrongpassword")
+	_, err := parsePrivateKey(pemBytes, "wrong")
 	if err == nil {
-		t.Fatalf("Expected error when parsing private key with wrong password")
+		t.Fatalf("expected error for wrong password")
 	}
 }
 
-// generateEncryptedECDSATestKeys generates a new ECDSA private key and self-signed certificate, and encrypts the private key
-func generateEncryptedECDSATestKeys(password string) ([]byte, error) {
-	// Generate a new ECDSA private key
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func TestParseRootCANil(t *testing.T) {
+	cert, err := parseRootCA(nil)
 	if err != nil {
-		return nil, err
+		t.Fatalf("parseRootCA returned unexpected error: %v", err)
 	}
-
-	eckey, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return nil, err
+	if cert != nil {
+		t.Fatalf("expected nil certificate for nil input")
 	}
-
-	// Encrypt the private key
-	privKeyPEMBlock, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", eckey, []byte(password), x509.PEMCipherAES256)
-	if err != nil {
-		return nil, err
-	}
-	privKeyPEM := pem.EncodeToMemory(privKeyPEMBlock)
-
-	return privKeyPEM, nil
 }
 
-// TestParseECDSAPrivateKey tests the parsePrivateKey function with an ECDSA private key
-func TestParseECDSAPrivateKey(t *testing.T) {
-	// Generate test keys
-	privKeyPEM, err := generateEncryptedECDSATestKeys("password")
+func TestParseRootCAInvalid(t *testing.T) {
+	_, err := parseRootCA([]byte("invalid"))
+	if !errors.Is(err, ErrInvalidPublicKey) {
+		t.Fatalf("expected ErrInvalidPublicKey, got %v", err)
+	}
+}
+
+func TestParseRootCASuccess(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+
+	cert, err := parseRootCA(root.certPEM)
 	if err != nil {
-		t.Fatalf("Failed to generate test keys: %v", err)
+		t.Fatalf("parseRootCA returned error: %v", err)
+	}
+	if !bytes.Equal(cert.Raw, root.cert.Raw) {
+		t.Fatalf("parsed root certificate mismatch")
+	}
+}
+
+func TestNewWithRSA(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+
+	intercept, err := New(ca.certPEM, ca.keyPEM, "", ca.certPEM)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	if intercept.privateKey == nil {
+		t.Fatalf("expected RSA private key to be set")
+	}
+	if intercept.privateKeyEC != nil {
+		t.Fatalf("expected privateKeyEC to be nil")
+	}
+	if intercept.rootCA == nil {
+		t.Fatalf("expected rootCA to be set")
+	}
+}
+
+func TestNewWithECDSA(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+
+	intercept, err := New(intermediate.certPEM, intermediate.keyPEM, "", root.certPEM)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	if intercept.privateKeyEC == nil {
+		t.Fatalf("expected ECDSA private key to be set")
+	}
+	if intercept.privateKey != nil {
+		t.Fatalf("expected privateKey to be nil")
+	}
+	if intercept.rootCA == nil || !bytes.Equal(intercept.rootCA.Raw, root.cert.Raw) {
+		t.Fatalf("expected rootCA to match provided root certificate")
+	}
+}
+
+func TestNewInvalidPublicKey(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	_, err := New([]byte("bad"), ca.keyPEM, "", ca.certPEM)
+	if err == nil {
+		t.Fatalf("expected error for invalid public key input")
+	}
+}
+
+func TestNewInvalidPrivateKey(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	_, err := New(ca.certPEM, []byte("bad"), "", ca.certPEM)
+	if err == nil {
+		t.Fatalf("expected error for invalid private key input")
+	}
+}
+
+func TestCreateInterceptWithRSA(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	intercept, err := createIntercept(ca.cert, ca.key, nil)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	if intercept.privateKey == nil || intercept.privateKeyEC != nil {
+		t.Fatalf("unexpected private key assignment")
+	}
+}
+
+func TestCreateInterceptWithECDSA(t *testing.T) {
+	ca := newTestCA(t, "ecdsa", nil)
+	intercept, err := createIntercept(ca.cert, ca.key, nil)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	if intercept.privateKeyEC == nil || intercept.privateKey != nil {
+		t.Fatalf("unexpected private key assignment")
+	}
+}
+
+func TestCreateInterceptInvalidKeyType(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	_, err := createIntercept(ca.cert, struct{}{}, nil)
+	if err == nil {
+		t.Fatalf("expected error for unsupported key type")
+	}
+}
+
+func TestSetterMethods(t *testing.T) {
+	ca := newTestCA(t, "rsa", nil)
+	intercept, err := New(ca.certPEM, ca.keyPEM, "", ca.certPEM)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
 	}
 
-	// Test parsing the private key
-	privateKey, err := parsePrivateKey(privKeyPEM, "password")
+	intercept.SetAIAAddress("http://aia.local")
+	intercept.SetCRLAddress("http://crl.local")
+	intercept.SetDomain("default.local")
+
+	if intercept.aiaAddress != "http://aia.local" {
+		t.Fatalf("unexpected AIA address %q", intercept.aiaAddress)
+	}
+	if intercept.crlAddress != "http://crl.local" {
+		t.Fatalf("unexpected CRL address %q", intercept.crlAddress)
+	}
+	if intercept.domain != "default.local" {
+		t.Fatalf("unexpected domain %q", intercept.domain)
+	}
+}
+
+func TestGenerateProxyCertificateAddsSANAndChain(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
 	if err != nil {
-		t.Fatalf("Failed to parse private key: %v", err)
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	intercept.SetDomain("default.local")
+	intercept.SetAIAAddress("http://aia.example/aia")
+	intercept.SetCRLAddress("http://crl.example/crl")
+
+	cert, err := intercept.generateProxyCertificate("www.example.com")
+	if err != nil {
+		t.Fatalf("generateProxyCertificate returned error: %v", err)
+	}
+	if cert == nil || cert.Leaf == nil {
+		t.Fatalf("expected non-nil certificate with parsed leaf")
+	}
+	if !slices.Contains(cert.Leaf.DNSNames, "www.example.com") {
+		t.Fatalf("expected requested hostname in DNS SANs")
+	}
+	if !slices.Contains(cert.Leaf.DNSNames, "default.local") {
+		t.Fatalf("expected default domain in DNS SANs")
+	}
+	if len(cert.Certificate) != 3 {
+		t.Fatalf("expected certificate chain length 3, got %d", len(cert.Certificate))
+	}
+	if len(cert.Leaf.IssuingCertificateURL) != 1 || cert.Leaf.IssuingCertificateURL[0] != "http://aia.example/aia" {
+		t.Fatalf("unexpected issuing certificate URL")
+	}
+	if len(cert.Leaf.CRLDistributionPoints) != 1 || cert.Leaf.CRLDistributionPoints[0] != "http://crl.example/crl" {
+		t.Fatalf("unexpected CRL distribution points")
+	}
+	if cert.PrivateKey == nil {
+		t.Fatalf("expected generated certificate to include private key")
+	}
+}
+
+func TestGenerateProxyCertificateAddsDomainIP(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "rsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	intercept.SetDomain("127.0.0.1:8443")
+
+	cert, err := intercept.generateProxyCertificate("192.0.2.1")
+	if err != nil {
+		t.Fatalf("generateProxyCertificate returned error: %v", err)
+	}
+	if len(cert.Leaf.IPAddresses) != 2 {
+		t.Fatalf("expected two IP SANs, got %d", len(cert.Leaf.IPAddresses))
+	}
+}
+
+func TestCreateCertificateStoresAndResetsOperation(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
 	}
 
-	if privateKey == nil {
-		t.Fatalf("Expected private key, got nil")
+	if err := intercept.CreateCertificate("cache.example"); err != nil {
+		t.Fatalf("CreateCertificate returned error: %v", err)
+	}
+	intercept.certStorage.mutex.RLock()
+	cert, ok := intercept.certStorage.Certificates["cache.example"]
+	intercept.certStorage.mutex.RUnlock()
+	if !ok {
+		t.Fatalf("certificate not stored for domain")
+	}
+	if cert.OperationInProgress {
+		t.Fatalf("operation flag not cleared")
+	}
+	if cert.Certificate == nil || cert.Certificate.Leaf == nil {
+		t.Fatalf("stored certificate invalid")
+	}
+}
+
+func TestGetCertificateReturnsCachedInstance(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "rsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+
+	first := intercept.GetCertificate("example.com")
+	if first == nil {
+		t.Fatalf("expected certificate on first retrieval")
+	}
+	second := intercept.GetCertificate("example.com")
+	if second == nil || first != second {
+		t.Fatalf("expected cached certificate instance")
+	}
+}
+
+func TestReturnCertFallsBackToConfiguredDomain(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	intercept.SetDomain("fallback.example")
+
+	cert, err := intercept.ReturnCert(&tls.ClientHelloInfo{ServerName: ""})
+	if err != nil {
+		t.Fatalf("ReturnCert returned error: %v", err)
+	}
+	if cert == nil {
+		t.Fatalf("expected fallback certificate")
+	}
+}
+
+func TestCertificateStorageOperationTracking(t *testing.T) {
+	storage := certificateStorage{
+		Certificates: make(map[string]IssuedCertificate),
+	}
+	storage.Certificates["example.com"] = IssuedCertificate{}
+
+	if storage.IsInOperation("example.com") {
+		t.Fatalf("unexpected operation flag before start")
+	}
+	storage.StartOperation("example.com")
+	if !storage.IsInOperation("example.com") {
+		t.Fatalf("expected operation flag after start")
+	}
+	storage.EndOperation("example.com")
+	if storage.IsInOperation("example.com") {
+		t.Fatalf("expected operation flag to be cleared")
+	}
+}
+
+func TestGCRemovesExpiringCertificates(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "rsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+
+	intercept.certStorage.Certificates["soon.example"] = IssuedCertificate{
+		Certificate: &tls.Certificate{},
+		Expires:     time.Now().Add(30 * time.Second),
+	}
+	intercept.certStorage.Certificates["later.example"] = IssuedCertificate{
+		Certificate: &tls.Certificate{},
+		Expires:     time.Now().Add(10 * time.Minute),
+	}
+
+	intercept.GC()
+
+	intercept.certStorage.mutex.RLock()
+	_, soonExists := intercept.certStorage.Certificates["soon.example"]
+	_, laterExists := intercept.certStorage.Certificates["later.example"]
+	intercept.certStorage.mutex.RUnlock()
+
+	if soonExists {
+		t.Fatalf("expected soon expiring certificate to be removed")
+	}
+	if !laterExists {
+		t.Fatalf("expected later certificate to remain")
+	}
+}
+
+func TestGenerateCRLWritesParsableFile(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := dir + "/crl.der"
+	if err := intercept.GenerateCRL("http://crl.example", path); err != nil {
+		t.Fatalf("GenerateCRL returned error: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read generated CRL: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatalf("expected CRL data to be written")
+	}
+	if _, err := x509.ParseDERCRL(data); err != nil {
+		t.Fatalf("generated CRL is not parsable: %v", err)
+	}
+}
+
+func TestGenKeyPairProducesECDSAKey(t *testing.T) {
+	key, err := genKeyPair()
+	if err != nil {
+		t.Fatalf("genKeyPair returned error: %v", err)
+	}
+	if key == nil || key.Curve != elliptic.P256() {
+		t.Fatalf("expected P256 key from genKeyPair")
 	}
 }
