@@ -61,7 +61,7 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	// our certificate. This server will now pretend being the target.
 	tlsConfig := &tls.Config{
 		PreferServerCipherSuites: true,
-		CurvePreferences:         []tls.CurveID{tls.X25519, tls.CurveP256},
+		CurvePreferences:         []tls.CurveID{tls.X25519MLKEM768, tls.X25519, tls.CurveP256},
 		MinVersion:               tls.VersionTLS12,
 		Certificates:             []tls.Certificate{*certBundle},
 	}
