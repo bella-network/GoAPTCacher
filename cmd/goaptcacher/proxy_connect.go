@@ -96,6 +96,9 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
+			if strings.Contains(err.Error(), "connection reset by") {
+				break
+			}
 			log.Println("error reading request from client:", err)
 			break
 		}
@@ -106,6 +109,9 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		incomingRequest.Method = http.MethodGet
 		incomingRequest.RemoteAddr = r.RemoteAddr
 		incomingRequest.RequestURI = fmt.Sprintf("https://%s%s", host, incomingRequest.URL.Path)
+
+		// Log the incoming request
+		log.Printf("[CONNECT] %s %s from %s\n", incomingRequest.Method, incomingRequest.URL.String(), incomingRequest.RemoteAddr)
 
 		recorder := httptest.NewRecorder()
 		// Handle the request
