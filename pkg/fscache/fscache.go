@@ -115,8 +115,8 @@ func (c *FSCache) ServeFromRequest(r *http.Request, w http.ResponseWriter) {
 	switch r.Method {
 	case http.MethodGet:
 		c.serveGETRequest(r, w)
-	//case http.MethodHead:
-	//c.serveHEADRequest(r, w, localFile)
+	case http.MethodHead:
+		c.serveHEADRequest(r, w)
 	//case http.MethodConnect:
 	// TODO: Implement CONNECT method
 	default:

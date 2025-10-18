@@ -21,9 +21,10 @@ func (c *FSCache) serveHEADRequest(r *http.Request, w http.ResponseWriter) {
 	// Check if the file exists in the cache
 	if fi, err := os.Stat(localFile); err == nil {
 		// Add header that describes the cache hit
-		w.Header().Add("X-Cache", "HIT")
-		w.Header().Add("Content-Length", fmt.Sprintf("%d", fi.Size()))
-		w.Header().Add("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Cache", "HIT")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Last-Modified", fi.ModTime().UTC().Format(http.TimeFormat))
 		return
 	}
 
@@ -42,7 +43,8 @@ func (c *FSCache) serveHEADRequest(r *http.Request, w http.ResponseWriter) {
 	}
 
 	// Add header that describes the cache miss
-	w.Header().Add("X-Cache", "MISS")
-	w.Header().Add("Content-Length", fmt.Sprintf("%d", fi.Size()))
-	w.Header().Add("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Cache", "MISS")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Last-Modified", fi.ModTime().UTC().Format(http.TimeFormat))
 }
