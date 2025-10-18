@@ -1,6 +1,7 @@
 package fscache
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -33,15 +34,22 @@ func (fs *FSCache) Get(protocol int, domain, path string) (AccessEntry, bool) {
 	)
 
 	var entry AccessEntry
-	var lastAccessed, lastChecked, remoteLastModified string
+	var lastAccessed, lastChecked, remoteLastModified sql.NullTime
 	err := row.Scan(&lastAccessed, &lastChecked, &remoteLastModified, &entry.ETag, &entry.Size, &entry.SHA256)
 	if err != nil {
 		return AccessEntry{}, false
 	}
 
-	entry.LastAccessed, _ = time.Parse(time.DateTime, lastAccessed)
-	entry.LastChecked, _ = time.Parse(time.DateTime, lastChecked)
-	entry.RemoteLastModified, _ = time.Parse(time.DateTime, remoteLastModified)
+	if lastAccessed.Valid && !lastAccessed.Time.IsZero() {
+		entry.LastAccessed = lastAccessed.Time
+	}
+	if lastChecked.Valid && !lastChecked.Time.IsZero() {
+		entry.LastChecked = lastChecked.Time
+	}
+	if remoteLastModified.Valid && !remoteLastModified.Time.IsZero() {
+		entry.RemoteLastModified = remoteLastModified.Time
+	}
+
 	if entry.RemoteLastModified.IsZero() {
 		entry.RemoteLastModified = entry.LastAccessed
 	}
