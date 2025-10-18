@@ -38,9 +38,10 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 	// Set basic headers for the response
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Cache-Control", "public, max-age=900")
-	w.Header().Set("Server", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
+	w.Header().Set("X-Proxy-Server", fmt.Sprintf("GoAptCacher/%s", buildinfo.Version))
 
-	// Check the access cache for the requested file
+	// Check the access cache for the requested file to see if it is available,
+	// which then allows a direct cache hit and serving the file directly.
 	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
 		localPath := c.buildLocalPath(r.URL)
@@ -65,8 +66,8 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		}
 
 		// Update last hit time for the file
-		c.Hit(protocol, r.URL.Host, r.URL.Path)
-		c.AddURLIfNotExists(protocol, r.URL.Host, r.URL.Path, r.URL.String())
+		go c.Hit(protocol, r.URL.Host, r.URL.Path)
+		go c.AddURLIfNotExists(protocol, r.URL.Host, r.URL.Path, r.URL.String())
 
 		// Set header that describes the cache hit
 		w.Header().Set("X-Cache", "HIT")
@@ -119,6 +120,7 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 		defer c.RemoveFileLock(protocol, r.URL.Host, r.URL.Path)
 
 		// Serve the file to the client
+		//		timingHeader.AddStep("file-serve")
 		http.ServeFile(w, r, c.buildLocalPath(r.URL))
 
 		// Log the cache hit
@@ -366,6 +368,13 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		return
 	}
 	cleanupTemp = false
+
+	// If last modified time is known, set it on the file
+	if !lastModifiedTime.IsZero() && lastModifiedTime.Year() > 2000 {
+		if err := os.Chtimes(targetPath, time.Now(), lastModifiedTime); err != nil {
+			log.Printf("Error setting file times: %v\n", err)
+		}
+	}
 
 	// Update the access cache with the new file
 	if err := c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{

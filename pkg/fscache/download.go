@@ -47,5 +47,12 @@ func (c *FSCache) downloadFileSimple(url string, localPath string) error {
 		return fmt.Errorf("download incomplete: expected %d bytes, got %d", resp.ContentLength, bw)
 	}
 
+	// Set file modification time
+	if lm := resp.Header.Get("Last-Modified"); lm != "" {
+		if t, err := http.ParseTime(lm); err == nil {
+			os.Chtimes(localPath, t, t)
+		}
+	}
+
 	return nil
 }
