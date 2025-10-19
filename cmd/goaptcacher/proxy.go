@@ -27,7 +27,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// If "/" is requested, redirect to the index page.
 	if r.Method != http.MethodConnect && r.URL.Path == "/" {
-		http.Redirect(w, r, "/_goaptcacher/", http.StatusTemporaryRedirect)
+		// We rely on auto-apt-proxy which has an built-in detection based on
+		// some software patterns if a proxy is active and can be used for APT.
+		// We need to add some dummy content here, the prettiest is a HTTP 406
+		// response on / and a HTML redirect to the index page.
+		// See: https://github.com/terceiro/auto-apt-proxy/blob/f3b86d8727cbf4968130f4fae2651be3480269ad/auto-apt-proxy#L148
+		w.WriteHeader(http.StatusNotAcceptable)
+		// Add a redirect to the index page for browsers.
+		w.Header().Set("Location", "/_goaptcacher/")
+		// Last fallback, write a small HTML meta refresh redirect.
+		_, _ = w.Write([]byte(`<html><head><meta http-equiv="refresh" content="0; url=/_goaptcacher/"></head><body>If you are not redirected automatically, follow this <a href="/_goaptcacher/">link to the index page</a>.</body></html>`))
 		return
 	}
 
@@ -125,6 +134,14 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			handleCONNECT(w, r)
 		}
 	case http.MethodGet:
+		// If passthrough is enabled or no domains are configured, forward the
+		// request to the target host without any caching or interception.
+		if passthrough || loadedDomains == 0 {
+			handleTUNNEL(w, r)
+		} else {
+			handleHTTP(w, r)
+		}
+	case http.MethodHead:
 		// If passthrough is enabled or no domains are configured, forward the
 		// request to the target host without any caching or interception.
 		if passthrough || loadedDomains == 0 {

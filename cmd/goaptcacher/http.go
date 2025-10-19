@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	_ "embed"
 	"fmt"
 	"log"
@@ -108,18 +109,27 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 		if config.HTTPS.Intercept {
 			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted)</li>`
 		} else if !config.HTTPS.Prevent {
-			pageContent += `<li>HTTPS Proxy: Enabled (Interception disabled, HTTPS traffic will be passed through)</li>`
+			pageContent += `<li>HTTPS Proxy: Enabled (Interception <strong>disabled</strong>, HTTPS traffic will be passed through)</li>`
 		} else {
 			pageContent += `<li>HTTPS Proxy: Disabled, HTTPS traffic will be blocked</li>`
 		}
 
+		// Main port information
 		pageContent += `<li>HTTP Port: ` + strconv.Itoa(config.ListenPort) + `</li>`
 
+		// Display HTTPS port if interception is enabled
 		if config.HTTPS.Intercept {
 			pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
 		}
 
-		pageContent += `</ul></li>`
+		// Display list of alternative ports if configured
+		if len(config.AlternativePorts) > 0 {
+			pageContent += `<li>Alternative Ports: <ul>`
+			for _, port := range config.AlternativePorts {
+				pageContent += "<li>" + strconv.Itoa(port) + "</li>"
+			}
+			pageContent += `</ul></li>`
+		}
 
 		// Display list of remapped URLs
 		pageContent += `<li>Remapped URLs: <ul>`
@@ -131,10 +141,10 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 		// Display list of overrides
 		pageContent += `<li>Overrides: <ul>`
 		if config.Overrides.UbuntuServer != "" {
-			pageContent += "<li>Ubuntu Server: " + config.Overrides.UbuntuServer + "</li>"
+			pageContent += "<li><strong>Ubuntu</strong>: " + config.Overrides.UbuntuServer + "</li>"
 		}
 		if config.Overrides.DebianServer != "" {
-			pageContent += "<li>Debian Server: " + config.Overrides.DebianServer + "</li>"
+			pageContent += "<li><strong>Debian</strong>: " + config.Overrides.DebianServer + "</li>"
 		}
 		pageContent += `</ul></li>`
 		pageContent += `</ul></p>`
@@ -216,7 +226,7 @@ func httpPageStats() string {
 
 	// From stats, get last 14 days of traffic
 	type statsEntry struct {
-		Date        string
+		Date        sql.NullTime
 		Requests    uint64
 		Hits        uint64
 		Misses      uint64
@@ -225,7 +235,7 @@ func httpPageStats() string {
 		TrafficDown uint64
 	}
 	var entryList []statsEntry
-	rows, err := db.Query("SELECT DATE(date), requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
+	rows, err := db.Query("SELECT date, requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
@@ -242,18 +252,17 @@ func httpPageStats() string {
 	}
 
 	// Get oldest date from the stats table
-	var oldestDate string
-	err = db.QueryRow("SELECT DATE(date) FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
+	var oldestDate sql.NullTime
+	err = db.QueryRow("SELECT date FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
 	if err != nil {
 		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
 	}
 
 	var oldestDateParsed time.Time
-	if oldestDate != "" {
-		oldestDateParsed, err = time.Parse("2006-01-02", oldestDate)
-		if err != nil {
-			log.Printf("[ERROR:WEB] Error parsing date: %s\n", err)
-		}
+	if oldestDate.Valid {
+		oldestDateParsed = oldestDate.Time
+	} else {
+		oldestDateParsed = time.Now()
 	}
 
 	response := `<h2>Cache statistics</h2>
@@ -287,14 +296,12 @@ func httpPageStats() string {
 				<th>Traffic fetched</th>
 			</tr>`
 	for _, entry := range entryList {
-		// Parse date from 2025-09-21T00:00:00Z format
-		dateParsed, err := time.Parse("2006-01-02T15:04:05Z", entry.Date)
 		if err != nil {
 			log.Printf("[ERROR:WEB] Error parsing date: %s\n", err)
 		}
 		response += fmt.Sprintf(
 			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d</td><td>%s</td><td>%s (%d%%)</td></tr>",
-			dateParsed.Format("2006-01-02"),
+			entry.Date.Time.Format("2006-01-02"),
 			entry.Requests,
 			entry.Hits,
 			100*entry.Hits/entry.Requests,
@@ -340,7 +347,7 @@ func httpPageSetup() string {
 		For configuration, there are multiple options available. Please choose the one that fits your needs.<br>
 	</p>`
 
-	// Configuration: Proxy Servers (HTTP and HTTPS)
+	// Configuration: Proxy Servers (HTTP and HTTPS) using static configuration
 	response += `<h3>APT Proxy Directives</h3>`
 	response += `<p>
 		To use this proxy server with APT, you need to add the following lines to your APT configuration file (usually located at <code>/etc/apt/apt.conf.d/10proxy.conf</code>):<br>
@@ -348,8 +355,7 @@ func httpPageSetup() string {
 Acquire::http::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
 Acquire::https::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
 		</pre>
-	</p>
-	`
+	</p>`
 
 	// Configuration: APT Proxy Server Discovery
 	response += `<h3>APT Proxy Discovery</h3>`
@@ -362,7 +368,11 @@ Acquire::https::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + h
 _apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `.</span>
 		</pre>
 
-		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy</code> on your system which should output the proxy server URL (e.g. <code>http://` + domain + `:` + httpPort + `</code>).
+		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy</code> on your system which should output the proxy server URL (e.g. <code>http://` + domain + `:` + httpPort + `</code>).<br>
+		<br>
+		Alternatively, you can also create an A or AAAA DNS record for <code><strong>apt-proxy</strong></code> or <code><strong>apt-proxy.example.com</strong></code> pointing to the IP address of this proxy server.<br>
+		<br>
+		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to <code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code> (based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP port 3142 to support this fallback.
 	</p>
 	`
 
@@ -379,10 +389,18 @@ _http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN S
 
 		For HTTPS destinations like <strong>download.docker.com</strong>, you can use the following SRV record:<br>
 		<pre>
-_https._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpsPort + ` ` + domain + `.</span>
+<strong>_https</strong>._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;"><strong>` + httpsPort + `</strong> ` + domain + `.</span>
 		</pre>
 	</p>
 	`
+
+	// Recommendations
+	response += `<h2>Recommendations</h2>`
+	response += `<p>
+		If all your clients are <strong>centrally managed</strong>, trusting the proxy server's CA certificate and always connected to the proxy server use the "APT Proxy Directives" method.<br>
+		<br>
+		When using <strong>GitLab CI/CD runners</strong>, clients with <strong>Windows Subsystem for Linux</strong> or other <strong>ephemeral systems</strong>, using the "APT Proxy Discovery" and "DNS SRV Override" method is recommended to avoid issues with changing IP addresses, DNS names or moving between networks.
+	</p>`
 
 	return response
 }
