@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,14 +38,27 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 
 	// Set basic headers for the response
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Cache-Control", "public, max-age=900")
 	w.Header().Set("X-Proxy-Server", fmt.Sprintf("GoAptCacher/%s", buildinfo.Version))
+
+	// If a file from path /pool/ is requested, check at first if the file is
+	// available on the local file system to be directly served. This speeds up
+	// requests for Debian packages significantly. If some weird URL is used
+	// which also contains /dists/, skip this optimization as this could freeze
+	// updates permanently.
+	localPath := c.buildLocalPath(r.URL)
+	if _, err := os.Stat(localPath); strings.Contains(localPath, "/pool/") && !strings.Contains(localPath, "/dists/") && err == nil {
+		// File exists, serve it directly to the client.
+		c.serveLocalFile(w, r, localPath)
+
+		// Perform background tasks for the cached file.
+		go c.backgroundFileTasks(r.URL)
+		return
+	}
 
 	// Check the access cache for the requested file to see if it is available,
 	// which then allows a direct cache hit and serving the file directly.
 	lastAccess, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
 	if ok {
-		localPath := c.buildLocalPath(r.URL)
 		if info, err := os.Stat(localPath); err != nil || (lastAccess.Size > 0 && info.Size() != lastAccess.Size) {
 			if err != nil {
 				if !os.IsNotExist(err) {
@@ -59,79 +73,71 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			return
 		}
 
-		// Remove the port from remote address if it is present
-		remoteAddr := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			remoteAddr = host
-		}
+		// Serve the file
+		c.serveLocalFile(w, r, localPath)
 
-		// Update last hit time for the file
-		go c.Hit(protocol, r.URL.Host, r.URL.Path)
-		go c.AddURLIfNotExists(protocol, r.URL.Host, r.URL.Path, r.URL.String())
-
-		// Set header that describes the cache hit
-		w.Header().Set("X-Cache", "HIT")
-
-		// Check if the file should be rechecked
-		if c.evaluateRefresh(r.URL, lastAccess) {
-			// File should be checked if a new version is available on the
-			// internet for cache refresh.
-			go c.cacheRefresh(r.URL, lastAccess)
-		}
-
-		// Add the Last-Modified header to the response
-		if !lastAccess.RemoteLastModified.IsZero() && lastAccess.RemoteLastModified.Year() > 2000 {
-			// Force the Last-Modified header to be in RFC1123 and GMT format as
-			// this is the format used by HTTP.
-			w.Header().Set("Last-Modified", lastAccess.RemoteLastModified.UTC().Format(time.RFC1123))
-		}
-
-		// Add the ETag header to the response if available
-		if lastAccess.ETag != "" {
-			w.Header().Set("ETag", lastAccess.ETag)
-		}
-
-		// Add the SHA256 header to the response if available
-		if lastAccess.SHA256 != "" {
-			w.Header().Set("X-SHA256", lastAccess.SHA256)
-		}
-
-		// Client may has delivered the header "If-Modified-Since". If the file has not been modified since the
-		// given time, we can return a 304 Not Modified response.
-		if ifModifiedSince := r.Header.Get("If-Modified-Since"); ifModifiedSince != "" {
-			parsedTime, err := time.Parse(time.RFC1123, ifModifiedSince)
-			if err != nil {
-				http.Error(w, "Error parsing If-Modified-Since header", http.StatusInternalServerError)
-				return
-			}
-
-			// Check if the file has been modified since the If-Modified-Since header
-			if !lastAccess.RemoteLastModified.IsZero() && lastAccess.RemoteLastModified.Before(parsedTime) && lastAccess.RemoteLastModified.Year() > 2000 {
-				w.WriteHeader(http.StatusNotModified)
-				log.Printf("[INFO:GET:NOTMODIFIED:%s] %s%s\n", remoteAddr, r.URL.Host, r.URL.Path)
-				go c.TrackRequest(true, 0)
-				return
-			}
-		}
-
-		// Direct cache hit, serve the file directly to the client and return.
-		c.CreateFileLock(protocol, r.URL.Host, r.URL.Path)
-		// Remove the file lock
-		defer c.RemoveFileLock(protocol, r.URL.Host, r.URL.Path)
-
-		// Serve the file to the client
-		//		timingHeader.AddStep("file-serve")
-		http.ServeFile(w, r, c.buildLocalPath(r.URL))
-
-		// Log the cache hit
-		log.Printf("[INFO:GET:HIT:%s] %s\n", remoteAddr, r.URL.String())
-		go c.TrackRequest(true, lastAccess.Size)
+		// Perform background tasks for the cached file.
+		go c.backgroundFileTasks(r.URL)
 
 		return
 	}
 
 	// Cache was missed, download the file from the internet and serve it to the client.
 	c.serveGETRequestCacheMiss(r, w, 0)
+}
+
+// serveLocalFile serves a local file to the client.
+func (c *FSCache) serveLocalFile(w http.ResponseWriter, r *http.Request, localPath string) {
+	protocol := DetermineProtocolFromURL(r.URL)
+
+	// Direct cache hit, serve the file directly to the client and return.
+	c.CreateFileLock(protocol, r.URL.Host, r.URL.Path)
+	// Remove the file lock
+	defer c.RemoveFileLock(protocol, r.URL.Host, r.URL.Path)
+
+	// Get file info
+	info, err := os.Stat(localPath)
+	if err != nil {
+		http.Error(w, "Error accessing cached file", http.StatusInternalServerError)
+		log.Printf("[ERROR:GET:STAT] %s - Error accessing cached file: %v\n", r.URL.String(), err)
+		return
+	}
+
+	// Set headers
+	w.Header().Set("X-Cache", "HIT")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+
+	// Serve the file
+	http.ServeFile(w, r, localPath)
+
+	// Log the cache hit
+	log.Printf("[INFO:GET:HIT:%s] %s\n", r.RemoteAddr, r.URL.String())
+	go c.TrackRequest(true, info.Size())
+}
+
+// backgroundFileTasks performs background tasks for a cached file, determines
+// if upstream is checked for updates and updates local tracking info.
+func (c *FSCache) backgroundFileTasks(request *url.URL) {
+	// Perform background tasks to update access cache, hit count, URL list and refresh
+	protocol := DetermineProtocolFromURL(request)
+
+	lastAccess, ok := c.Get(protocol, request.Host, request.Path)
+	if !ok {
+		// File is not in access cache, nothing to do.
+		return
+	}
+
+	// Check if the file should be rechecked
+	if c.evaluateRefresh(request, lastAccess) {
+		// File should be checked if a new version is available on the
+		// internet for cache refresh.
+		go c.cacheRefresh(request, lastAccess)
+	}
+
+	go c.Hit(protocol, request.Host, request.Path)
+	go c.AddURLIfNotExists(protocol, request.Host, request.Path, request.String())
 }
 
 // serveGETRequestCacheMiss is the function to serve a GET request for a client if the cache was missed.
