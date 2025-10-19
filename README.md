@@ -244,10 +244,26 @@ GoAPTCacher is able to announce itself via DNS records, mDNS and DNS-SRV records
 - Slow or no UI -> Check service logs; verify `index.enable: true` and that the service binds to the expected interface.
 - Hash mismatches -> Check if a mirror override or remap is causing packages to be fetched from unexpected hosts. You can also delete the corrupted files from the cache directory.
 
-## Tested with
+## Tested
 
 - Ubuntu Desktop and Server
 - Debian
+- Proxmox VE and Proxmox Mail Gateway
+- PPAs from Launchpad
+- Raspbian / Raspberry Pi OS
+- Private APT repositories like
+  - Microsoft (VS Code, PowerShell, Edge, )
+  - GitLab (GitLab CE/EE, GitLab Runner)
+  - Docker
+  - Syncthing
+  - Cloudsmith (ISC Kea DHCP)
+  - Smallstep (step-ca)
+  - Google (Google Chrome)
+- Repositories created with
+  - aptly
+  - reprepro
+
+Please note that for Debian, requests to `/debian-security/` will always be mapped to `security.debian.org` regardless of the mirror used for other requests. This is due to the way Debian structures its repositories.
 
 # Feedback and Contributions
 
