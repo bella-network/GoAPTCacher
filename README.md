@@ -99,6 +99,16 @@ The configuration file is structured in YAML format and contains the following e
 # The main cache directory where the packages and database are stored
 cache_directory: "/var/cache/goaptcacher"
 
+# The main listening port for HTTP connections (default: 8090)
+listen_port: 8090
+
+# The main listening port for HTTPS connections (default: 8091)
+listen_port_secure: 8091
+
+# Alternative listening ports (e.g., for compatibility with apt-cacher-ng, no default)
+alternative_ports:
+  - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
+
 # MariabDB/MySQL connection details (for internal indexing and stats)
 # The user must have access to create tables and indexes, these are created automatically if they do not exist.
 database:
@@ -134,9 +144,11 @@ passthrough_domains:
 
 # HTTPS interception settings (if enabled, requires cert/key) and allows to intercept HTTPS traffic to cache packages that are served over HTTPS.
 https:
-  intercept: true
-  cert: "public.key"
-  key: "private.key"
+  prevent: false # Prevent HTTPS requests from being cached and proxied
+  intercept: true # Enable HTTPS interception (set to false to run in pure proxy/tunnel mode)
+
+  cert: "public.key" # Path to the Public Key File (PEM format) of the Intermediate CA which will issue leaf certificates on-the-fly
+  key: "private.key" # Path to the Private Key File (PEM format) of the Intermediate CA
   password: "mysecret" # Optional password for encrypted key files
   certificate_domain: "cache.example.com" # The domain name that will be used in the generated leaf certificates (must match the SAN of the cert)
   aia_address: "http://cache.example.com/goaptcacher.crt" # Authority Information Access (AIA) URL to include in leaf certs for clients to download the CA cert
@@ -231,6 +243,11 @@ GoAPTCacher is able to announce itself via DNS records, mDNS and DNS-SRV records
 - Origin errors (403/401) -> Repository requires subscription/auth; add the domain to passthrough_domains.
 - Slow or no UI -> Check service logs; verify `index.enable: true` and that the service binds to the expected interface.
 - Hash mismatches -> Check if a mirror override or remap is causing packages to be fetched from unexpected hosts. You can also delete the corrupted files from the cache directory.
+
+## Tested with
+
+- Ubuntu Desktop and Server
+- Debian
 
 # Feedback and Contributions
 

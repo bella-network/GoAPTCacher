@@ -1,4 +1,10 @@
 cache_directory: "/var/cache/goaptcacher"
+
+listen_port: 8090
+listen_port_secure: 8091
+alternative_ports:
+  - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
+
 database:
   hostname: "localhost"
   username: "goaptcacher"
@@ -15,6 +21,8 @@ domains:
 
   - "security.debian.org" # Debian security
   - ".debian.org" # Debian archive
+
+  - "repo.bella.network" # bella.network Package Repository for GoAPTCacher
 
   - "download.proxmox.com" # Proxmox VE
 

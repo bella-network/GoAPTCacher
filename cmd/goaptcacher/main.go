@@ -66,7 +66,7 @@ func main() {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
 
-	log.Println("[INFO] Starting goaptcacher")
+	log.Println("[INFO] Starting GoAPTCacher ", buildinfo.Version)
 
 	// Check if envorinment variable is set with the path to the config file
 	// Priorität: Kommandozeilenoption > ENV > Default
@@ -225,6 +225,13 @@ func main() {
 
 	// Start the HTTP listener
 	go ListenHTTP()
+	if len(config.AlternativePorts) > 0 {
+		for _, port := range config.AlternativePorts {
+			go ListenHTTPAlternative(port)
+		}
+	} else {
+		log.Println("[INFO] No alternative ports configured")
+	}
 
 	// If mDNS is enabled, announce the service
 	if config.MDNS {

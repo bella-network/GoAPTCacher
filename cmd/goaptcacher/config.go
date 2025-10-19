@@ -10,6 +10,7 @@ type Config struct {
 	CacheDirectory   string `yaml:"cache_directory"`    // Directory where the cache files are stored
 	ListenPort       int    `yaml:"listen_port"`        // Port on which the proxy server listens
 	ListenPortSecure int    `yaml:"listen_port_secure"` // Port on which the proxy server listens for HTTPS requests
+	AlternativePorts []int  `yaml:"alternative_ports"`  // Additional ports on which the proxy server listens
 
 	Database struct {
 		Hostname string `yaml:"hostname"` // Hostname of the database server
