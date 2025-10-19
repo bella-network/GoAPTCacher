@@ -372,7 +372,9 @@ _apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 
 		<br>
 		Alternatively, you can also create an A or AAAA DNS record for <code><strong>apt-proxy</strong></code> or <code><strong>apt-proxy.example.com</strong></code> pointing to the IP address of this proxy server.<br>
 		<br>
-		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to <code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code> (based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP port 3142 to support this fallback.
+		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to <code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code> (based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP port 3142 to support this fallback.<br>
+		<br>
+		<strong>Important note:</strong> <code>auto-apt-proxy</code> only applies the proxy settings for HTTP connections. HTTPS connections will not use the proxy server unless you manually configure the HTTPS proxy as well (see above).
 	</p>
 	`
 
