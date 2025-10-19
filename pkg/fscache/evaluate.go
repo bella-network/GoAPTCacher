@@ -9,18 +9,27 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
 
+// RefreshFiles is a list of files that should be refreshed more often as these
+// contain the main indexes of a repository and are changed every time packages
+// are added or removed.
 var RefreshFiles = []string{
 	"InRelease",
 	"Release",
 	"Release.gpg",
 	"Packages",
 	"Packages.gz",
+	"Packages.bz2",
+	"Packages.xz",
+	"Sources",
+	"Sources.gz",
+	"Index",
 }
 
 var ConnectedFiles = map[string][]string{
@@ -57,9 +66,23 @@ func (c *FSCache) evaluateRefresh(localFile *url.URL, lastAccess AccessEntry) bo
 	// From localFile, get the filename only without the path
 	filename := filepath.Base(c.buildLocalPath(localFile))
 
+	// By default a 24 hour recheck timeout is used
 	recheckTimeout := time.Hour * 24
 
-	// Check if the file is in the list of files that should be refreshed more often
+	// If the file is within pool/**, these files are usually static and do not
+	// need to be refreshed often.
+	if strings.Contains(localFile.Path, "/pool/") {
+		recheckTimeout = time.Hour * 168 // 7 days
+	}
+
+	// Files served using the "by-hash" URL usually do not change and can be
+	// cached for longer periods, same as pool files.
+	if strings.Contains(localFile.Path, "/by-hash/") {
+		recheckTimeout = time.Hour * 168 // 7 days
+	}
+
+	// Check if the file is in the RefreshFiles list which should be kept as fresh
+	// as possible.
 	if slices.Contains(RefreshFiles, filename) {
 		recheckTimeout = time.Minute * 5
 	}
@@ -69,6 +92,7 @@ func (c *FSCache) evaluateRefresh(localFile *url.URL, lastAccess AccessEntry) bo
 }
 
 // cacheRefresh refreshes the file if it has changed. If the file has changed, it
+// will be downloaded again.
 func (c *FSCache) cacheRefresh(localFile *url.URL, lastAccess AccessEntry) {
 	generatedName := c.buildLocalPath(localFile)
 	// From localFile, get the filename only without the path
