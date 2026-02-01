@@ -34,6 +34,10 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 
+	if handleDebugRequests(w, r, requestedPath) {
+		return
+	}
+
 	// Based on the requested path, serve the appropriate page.
 	switch requestedPath {
 	case "/style.css", "style.css":

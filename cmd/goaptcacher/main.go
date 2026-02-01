@@ -84,6 +84,9 @@ func main() {
 		log.Fatal("Error reading config file: ", err)
 	}
 
+	// Initialize debug logging and pprof snapshotting (if enabled).
+	initDebug()
+
 	// Initialize the database connection
 	db, err = odb.NewMySQL(odb.DatabaseOptions{
 		Host:     config.Database.Hostname,

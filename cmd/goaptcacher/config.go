@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v2"
 )
@@ -52,6 +53,18 @@ type Config struct {
 		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
 
+	Debug struct {
+		Enable             bool `yaml:"enable"`               // Enable debug output and debug endpoints
+		AllowRemote        bool `yaml:"allow_remote"`         // Allow debug endpoints to be accessed remotely
+		LogIntervalSeconds int  `yaml:"log_interval_seconds"` // Interval for periodic debug logging (seconds)
+		Pprof              struct {
+			Enable          bool   `yaml:"enable"`           // Enable periodic pprof snapshots
+			Directory       string `yaml:"directory"`        // Directory to store pprof snapshots
+			IntervalSeconds int    `yaml:"interval_seconds"` // Snapshot interval in seconds
+			Retain          int    `yaml:"retain"`           // Number of snapshots to keep (0 = keep all)
+		} `yaml:"pprof"`
+	} `yaml:"debug"`
+
 	MDNS bool `yaml:"mdns"` // Enable mDNS announcement for apt proxy auto-discovery
 
 	Expiration struct {
@@ -87,6 +100,21 @@ func ReadConfig(path string) (*Config, error) {
 	// Set default listen port if not set
 	if config.ListenPort == 0 {
 		config.ListenPort = 8090
+	}
+
+	// Apply debug defaults if debug is enabled
+	if config.Debug.Enable {
+		if config.Debug.LogIntervalSeconds == 0 {
+			config.Debug.LogIntervalSeconds = 60
+		}
+		if config.Debug.Pprof.Enable {
+			if config.Debug.Pprof.IntervalSeconds == 0 {
+				config.Debug.Pprof.IntervalSeconds = 60
+			}
+			if config.Debug.Pprof.Directory == "" {
+				config.Debug.Pprof.Directory = filepath.Join(config.CacheDirectory, "pprof")
+			}
+		}
 	}
 
 	return config, nil
