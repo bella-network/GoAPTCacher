@@ -324,22 +324,40 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 
 	// Write the response status now that headers are populated and storage is reserved.
 	w.WriteHeader(resp.StatusCode)
-
-	// Create an async file writer that writes to the file with a buffer size of
-	// 32KB This allows the file to be written asynchronously while still being
-	// able to stream the response to the client.
-	asyncWriter := newAsyncFileWriter(file, 32)
-	multiWriter := io.MultiWriter(w, asyncWriter)
-
-	// Stream data to the client and asynchronously to disk.
-	bw, err := io.Copy(multiWriter, resp.Body)
-	if errClose := asyncWriter.Close(); err == nil && errClose != nil {
-		err = errClose
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
 	}
+
+	defer func() {
+		if file != nil {
+			_ = file.Close()
+		}
+	}()
+
+	var clientWriter io.Writer = w
+	if flusher, ok := w.(http.Flusher); ok {
+		clientWriter = flushWriter{w: w, flusher: flusher}
+	}
+
+	hasher := sha256.New()
+	cacheDropper := newCacheDropWriter(file, cacheDropThreshold, cacheDropChunk)
+	multiWriter := io.MultiWriter(clientWriter, cacheDropper, hasher)
+	copyBuf := make([]byte, 32*1024)
+	reader := readerOnly{r: resp.Body}
+
+	// Stream data to the client and write to disk with a bounded buffer to
+	// avoid unbounded memory usage.
+	bw, err := io.CopyBuffer(multiWriter, reader, copyBuf)
 	if err != nil {
 		log.Printf("Error writing file: %v\n", err)
 		return
 	}
+	cacheDropper.DropCache()
+	if err := file.Close(); err != nil {
+		log.Printf("Error closing file: %v\n", err)
+		return
+	}
+	file = nil
 
 	// Check if the number of bytes written matches the Content-Length header
 	if resp.ContentLength > 0 && resp.ContentLength != bw {
@@ -358,13 +376,7 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 		}
 	}
 
-	// Generate SHA256 hash of the downloaded file
-	hash, err := GenerateSHA256Hash(tempPath)
-	if err != nil {
-		log.Printf("Error generating SHA256 hash: %v\n", err)
-		http.Error(w, "Error generating file hash", http.StatusInternalServerError)
-		return
-	}
+	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Rename the file to its final name
 	err = os.Rename(tempPath, targetPath)
@@ -410,6 +422,28 @@ func copyResponseHeaders(dst, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+}
+
+// readerOnly hides optional interfaces (like io.WriterTo) to keep io.CopyBuffer
+// using the provided buffer size.
+type readerOnly struct {
+	r io.Reader
+}
+
+func (ro readerOnly) Read(p []byte) (int, error) {
+	return ro.r.Read(p)
+}
+
+// flushWriter forces periodic flushes so clients receive streamed data.
+type flushWriter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (fw flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.flusher.Flush()
+	return n, err
 }
 
 // GenerateSHA256Hash generates a SHA256 hash of the file at the given path.

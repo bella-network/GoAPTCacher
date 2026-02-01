@@ -11,3 +11,7 @@ func platformPreallocate(file *os.File, required int64) error {
 
 	return file.Truncate(required)
 }
+
+func platformDropCacheRange(file *os.File, offset, length int64) error {
+	return nil
+}

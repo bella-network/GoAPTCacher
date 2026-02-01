@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 )
 
@@ -113,19 +112,16 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		// Log the incoming request
 		log.Printf("[CONNECT] %s %s from %s\n", incomingRequest.Method, incomingRequest.URL.String(), incomingRequest.RemoteAddr)
 
-		recorder := httptest.NewRecorder()
+		writer := newConnectResponseWriter(tlsConn)
 		// Handle the request
-		handleRequest(recorder, incomingRequest)
+		handleRequest(writer, incomingRequest)
 
-		// Send the target server's response back to the client.
-		response := recorder.Result()
-		if err := response.Write(tlsConn); err != nil {
+		if err := writer.Close(); err != nil {
 			log.Println("error writing response back:", err)
 		}
-		response.Body.Close()
 
 		// Close the connection if the client closed the connection
-		if response.Close {
+		if incomingRequest.Close || writer.closeAfter {
 			break
 		}
 	}
@@ -136,4 +132,136 @@ func handleCONNECT(w http.ResponseWriter, r *http.Request) {
 func proxyCONNECTStatus(code int, message string) []byte {
 	content := fmt.Sprintf("HTTP/1.1 %d %s\r\n\r\n", code, message)
 	return []byte(content)
+}
+
+type connectResponseWriter struct {
+	conn        net.Conn
+	bw          *bufio.Writer
+	header      http.Header
+	wroteHeader bool
+	status      int
+	chunked     bool
+	closeAfter  bool
+}
+
+func newConnectResponseWriter(conn net.Conn) *connectResponseWriter {
+	return &connectResponseWriter{
+		conn:   conn,
+		bw:     bufio.NewWriterSize(conn, 32*1024),
+		header: make(http.Header),
+	}
+}
+
+func (w *connectResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *connectResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = status
+	_ = w.writeHeader()
+}
+
+func (w *connectResponseWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		if err := w.writeHeader(); err != nil {
+			return 0, err
+		}
+	}
+
+	if w.chunked {
+		if len(p) == 0 {
+			return 0, nil
+		}
+		if _, err := fmt.Fprintf(w.bw, "%x\r\n", len(p)); err != nil {
+			return 0, err
+		}
+		if _, err := w.bw.Write(p); err != nil {
+			return 0, err
+		}
+		if _, err := w.bw.WriteString("\r\n"); err != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
+
+	return w.bw.Write(p)
+}
+
+func (w *connectResponseWriter) Flush() {
+	if !w.wroteHeader {
+		_ = w.writeHeader()
+	}
+	_ = w.bw.Flush()
+}
+
+func (w *connectResponseWriter) Close() error {
+	if !w.wroteHeader {
+		if err := w.writeHeader(); err != nil {
+			return err
+		}
+	}
+	if w.chunked {
+		if _, err := w.bw.WriteString("0\r\n\r\n"); err != nil {
+			return err
+		}
+	}
+	return w.bw.Flush()
+}
+
+func (w *connectResponseWriter) writeHeader() error {
+	if w.wroteHeader {
+		return nil
+	}
+
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+
+	if v := w.header.Get("Connection"); v != "" && strings.EqualFold(strings.TrimSpace(v), "close") {
+		w.closeAfter = true
+	}
+
+	if w.header.Get("Content-Length") == "" {
+		te := w.header.Get("Transfer-Encoding")
+		if te == "" {
+			if !statusNoBody(status) {
+				w.chunked = true
+				w.header.Set("Transfer-Encoding", "chunked")
+			}
+		} else if strings.Contains(strings.ToLower(te), "chunked") {
+			w.chunked = true
+		}
+	}
+
+	if w.chunked {
+		w.header.Del("Content-Length")
+	}
+
+	if _, err := fmt.Fprintf(w.bw, "HTTP/1.1 %d %s\r\n", status, http.StatusText(status)); err != nil {
+		return err
+	}
+	for key, values := range w.header {
+		for _, value := range values {
+			if _, err := fmt.Fprintf(w.bw, "%s: %s\r\n", key, value); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := w.bw.WriteString("\r\n"); err != nil {
+		return err
+	}
+
+	w.wroteHeader = true
+	return nil
+}
+
+func statusNoBody(status int) bool {
+	if status >= 100 && status <= 199 {
+		return true
+	}
+	return status == http.StatusNoContent || status == http.StatusNotModified
 }

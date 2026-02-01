@@ -26,3 +26,7 @@ func platformPreallocate(file *os.File, required int64) error {
 
 	return nil
 }
+
+func platformDropCacheRange(file *os.File, offset, length int64) error {
+	return unix.Fadvise(int(file.Fd()), offset, length, unix.FADV_DONTNEED)
+}
