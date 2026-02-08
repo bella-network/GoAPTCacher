@@ -42,25 +42,43 @@ func (c *FSCache) runSourcesVerification() {
 
 // verifySources performs a single verification run.
 func (c *FSCache) verifySources() error {
-	rows, err := c.db.Query("SELECT (SELECT protocol FROM domains WHERE id = f.domain) AS protocol, (SELECT domain FROM domains WHERE id = f.domain) AS domain, path, url, etag FROM files WHERE path LIKE '%/InRelease'")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
 	type releaseEntry struct {
 		domain   string
 		url      string
 		etag     string
 		protocol int
 	}
+
+	entries, err := c.collectAccessCacheRecords()
+	if err != nil {
+		return err
+	}
+
 	releases := []releaseEntry{}
-	for rows.Next() {
-		var domain, path, u, e string
-		var protocol int
-		if err := rows.Scan(&protocol, &domain, &path, &u, &e); err == nil {
-			releases = append(releases, releaseEntry{domain: domain, url: u, etag: e, protocol: protocol})
+	for _, record := range entries {
+		path := record.path
+		if path == "" && record.entry.URL != nil {
+			path = record.entry.URL.Path
 		}
+		if !strings.HasSuffix(path, "/InRelease") {
+			continue
+		}
+
+		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+		if entry.URL == nil {
+			continue
+		}
+		domain := record.domain
+		if domain == "" {
+			domain = entry.URL.Host
+		}
+
+		releases = append(releases, releaseEntry{
+			domain:   domain,
+			url:      entry.URL.String(),
+			etag:     entry.ETag,
+			protocol: record.protocol,
+		})
 	}
 
 	packagesChecksums := make(map[string]string)
@@ -98,34 +116,39 @@ func (c *FSCache) verifySources() error {
 		}
 	}
 
-	// Now verify the cached .deb files against the packagesChecksums map by
-	// selecting every .deb file from the files table
-	rows2, err := c.db.Query("SELECT (SELECT protocol FROM domains WHERE id = f.domain) AS protocol, (SELECT domain FROM domains WHERE id = f.domain) AS domain, path FROM files WHERE path LIKE '%.deb'")
-	if err != nil {
-		return err
-	}
-	defer rows2.Close()
-
-	for rows2.Next() {
-		var domain, path string
-		var protocol int
-		if err := rows2.Scan(&protocol, &domain, &path); err != nil {
+	// Now verify the cached .deb files against the packagesChecksums map.
+	for _, record := range entries {
+		path := record.path
+		if path == "" && record.entry.URL != nil {
+			path = record.entry.URL.Path
+		}
+		if !strings.HasSuffix(path, ".deb") {
 			continue
 		}
+
+		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+		if entry.URL == nil {
+			continue
+		}
+		domain := record.domain
+		if domain == "" {
+			domain = entry.URL.Host
+		}
+
 		expected, ok := packagesChecksums[domain+path]
 		if !ok {
 			log.Printf("[INFO:VERIFY] %s%s not found in packages index, marking for deletion", domain, path)
-			c.MarkForDeletion(protocol, domain, path)
+			c.MarkForDeletion(record.protocol, domain, path)
 			continue
 		}
-		filePath := c.CachePath + "/" + domain + path
+		filePath := c.buildLocalPath(entry.URL)
 		h, err := sha256File(filePath)
 		if err != nil {
 			continue
 		}
 		if h != expected {
 			log.Printf("[INFO:VERIFY] %s%s checksum mismatch: expected %s, got %s, marking for deletion", domain, path, expected, h)
-			c.MarkForDeletion(protocol, domain, path)
+			c.MarkForDeletion(record.protocol, domain, path)
 		}
 	}
 

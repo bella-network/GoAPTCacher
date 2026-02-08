@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -42,30 +43,27 @@ func (c *FSCache) GetUnusedFiles(days uint64) ([]url.URL, error) {
 		return nil, nil
 	}
 
-	rows, err := c.db.Query("SELECT d.protocol, d.domain, f.path, f.url, f.size FROM access_cache a JOIN files f ON a.file = f.id JOIN domains d ON f.domain = d.id WHERE a.last_access < NOW() - INTERVAL ? DAY", days)
+	files := []url.URL{}
+	sizeTotal := uint64(0)
+	entries, err := c.collectAccessCacheRecords()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	files := []url.URL{}
-	sizeTotal := uint64(0)
-	for rows.Next() {
-		var domain, path, rurl string
-		var size uint64
-		var protocol int
-		err = rows.Scan(&protocol, &domain, &path, &rurl, &size)
-		if err != nil {
-			return nil, err
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	for _, record := range entries {
+		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+		if entry.LastAccessed.IsZero() {
+			continue
 		}
-
-		parsedURL, err := url.Parse(rurl)
-		if err != nil {
-			return nil, err
+		if entry.LastAccessed.Before(cutoff) {
+			if entry.URL != nil {
+				files = append(files, *entry.URL)
+			}
+			if entry.Size > 0 {
+				sizeTotal += uint64(entry.Size)
+			}
 		}
-
-		files = append(files, *parsedURL)
-		sizeTotal += uint64(size)
 	}
 
 	log.Printf("[INFO:EXPIRE] Found %d files that have not been accessed for %d days. Total size: %d bytes\n", len(files), days, sizeTotal)
@@ -73,9 +71,9 @@ func (c *FSCache) GetUnusedFiles(days uint64) ([]url.URL, error) {
 	return files, nil
 }
 
-// DeleteUnreferencedFiles deletes all files that are not referenced in the database.
+// DeleteUnreferencedFiles deletes all files that are not referenced in the cache metadata.
 func (c *FSCache) DeleteUnreferencedFiles() error {
-	err := c.deleteUnreferencedFilesByDatabase()
+	err := c.deleteUnreferencedFilesByMetadata()
 	if err != nil {
 		return err
 	}
@@ -83,43 +81,36 @@ func (c *FSCache) DeleteUnreferencedFiles() error {
 	return nil
 }
 
-// deleteUnreferencedFilesByDatabase deletes all files that are found in the
-// database but not on the filesystem.
-func (c *FSCache) deleteUnreferencedFilesByDatabase() error {
-	rows, err := c.db.Query("SELECT ...")
+// deleteUnreferencedFilesByMetadata deletes all files that are found in the
+// cache metadata but not on the filesystem.
+func (c *FSCache) deleteUnreferencedFilesByMetadata() error {
+	files := []url.URL{}
+	sizeTotal := uint64(0)
+	entries, err := c.collectAccessCacheRecords()
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
-	files := []url.URL{}
-	sizeTotal := uint64(0)
-	for rows.Next() {
-		var domain, path, rurl string
-		var size uint64
-		err = rows.Scan(&domain, &path, &rurl, &size)
-		if err != nil {
-			return err
-		}
-
-		parsedURL, err := url.Parse(rurl)
-		if err != nil {
-			continue
-		}
-
-		if _, err := os.Stat(c.CachePath + "/" + domain + "/" + path); os.IsNotExist(err) {
-			files = append(files, *parsedURL)
-			sizeTotal += uint64(size)
+	for _, record := range entries {
+		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+		localPath := c.buildLocalPath(entry.URL)
+		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+			if entry.URL != nil {
+				files = append(files, *entry.URL)
+			}
+			if entry.Size > 0 {
+				sizeTotal += uint64(entry.Size)
+			}
 		}
 	}
 
-	log.Printf("[INFO:EXPIRE] Found %d files that are not on the filesystem but in the database. Total size: %d bytes\n", len(files), sizeTotal)
+	log.Printf("[INFO:EXPIRE] Found %d files that are not on the filesystem but in the cache metadata. Total size: %d bytes\n", len(files), sizeTotal)
 
 	return nil
 }
 
 // deleteUnreferencedFilesByFilesystem deletes all files that are found on the
-// filesystem but not in the database.
+// filesystem but not in the cache metadata.
 func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 	// Get all files in the cache directory
 	files, err := c.getFilesInCacheDirectory()
@@ -127,24 +118,21 @@ func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 		return err
 	}
 
-	// Get all files in the database
-	rows, err := c.db.Query("SELECT d.protocol, d.domain, f.path, f.url FROM files f JOIN domains d ON f.domain = d.id")
+	// Create a map of all files in the database
+	filesInDatabase := map[string]bool{}
+	entries, err := c.collectAccessCacheRecords()
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
-	// Create a map of all files in the database
-	filesInDatabase := map[string]bool{}
-	for rows.Next() {
-		var domain, path, rurl string
-		var protocol int
-		err = rows.Scan(&protocol, &domain, &path, &rurl)
+	for _, record := range entries {
+		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+		localPath := c.buildLocalPath(entry.URL)
+		rel, err := filepath.Rel(c.CachePath, localPath)
 		if err != nil {
-			return err
+			continue
 		}
-
-		filesInDatabase[domain+"/"+path] = true
+		filesInDatabase[rel] = true
 	}
 
 	// Delete all files that are not in the database
@@ -170,6 +158,9 @@ func (c *FSCache) getFilesInCacheDirectory() ([]string, error) {
 		}
 
 		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, accessCacheMetaSuffix) {
 			return nil
 		}
 

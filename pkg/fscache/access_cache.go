@@ -1,10 +1,12 @@
 package fscache
 
 import (
-	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,148 +26,478 @@ type AccessEntry struct {
 	SHA256             string    `json:"sha256,omitempty"`
 }
 
-// Get returns the AccessEntry information for a given protocol, domain, and path.
-func (fs *FSCache) Get(protocol int, domain, path string) (AccessEntry, bool) {
-	row := fs.db.QueryRow(
-		"SELECT ac.last_access, ac.last_check, f.modified, f.etag, f.size, f.sha256 FROM access_cache ac JOIN files f ON ac.file = f.id JOIN domains d ON f.domain = d.id WHERE d.protocol = ? AND d.domain = ? AND f.path = ?",
-		protocol,
-		domain,
-		path,
-	)
+const (
+	accessCacheMetaSuffix           = ".access.json"
+	accessCacheFlushIntervalDefault = 30 * time.Second
+)
 
-	var entry AccessEntry
-	var lastAccessed, lastChecked, remoteLastModified sql.NullTime
-	err := row.Scan(&lastAccessed, &lastChecked, &remoteLastModified, &entry.ETag, &entry.Size, &entry.SHA256)
-	if err != nil {
-		return AccessEntry{}, false
-	}
+type accessEntryJSON struct {
+	Protocol           int       `json:"protocol"`
+	Domain             string    `json:"domain"`
+	Path               string    `json:"path"`
+	URL                string    `json:"url,omitempty"`
+	LastAccessed       time.Time `json:"last_accessed,omitempty"`
+	LastChecked        time.Time `json:"last_checked,omitempty"`
+	RemoteLastModified time.Time `json:"remote_last_modified,omitempty"`
+	ETag               string    `json:"etag,omitempty"`
+	Size               int64     `json:"size,omitempty"`
+	SHA256             string    `json:"sha256,omitempty"`
+	MarkedForDeletion  bool      `json:"marked_for_deletion,omitempty"`
+	MarkedAt           time.Time `json:"marked_at,omitempty"`
+}
 
-	if lastAccessed.Valid && !lastAccessed.Time.IsZero() {
-		entry.LastAccessed = lastAccessed.Time
-	}
-	if lastChecked.Valid && !lastChecked.Time.IsZero() {
-		entry.LastChecked = lastChecked.Time
-	}
-	if remoteLastModified.Valid && !remoteLastModified.Time.IsZero() {
-		entry.RemoteLastModified = remoteLastModified.Time
-	}
+type accessCacheRecord struct {
+	entry             AccessEntry
+	protocol          int
+	domain            string
+	path              string
+	markedForDeletion bool
+	markedAt          time.Time
+	dirty             bool
+}
 
-	if entry.RemoteLastModified.IsZero() {
+func (fs *FSCache) accessCacheKey(protocol int, domain, path string) string {
+	return strconv.Itoa(protocol) + "|" + domain + "|" + path
+}
+
+func protocolScheme(protocol int) string {
+	if protocol == 1 {
+		return "https"
+	}
+	return "http"
+}
+
+func (fs *FSCache) buildAccessURL(protocol int, domain, path string) *url.URL {
+	return &url.URL{
+		Scheme: protocolScheme(protocol),
+		Host:   domain,
+		Path:   path,
+	}
+}
+
+func (fs *FSCache) accessCacheMetaPath(protocol int, domain, path string) string {
+	localPath := fs.buildLocalPath(fs.buildAccessURL(protocol, domain, path))
+	return localPath + accessCacheMetaSuffix
+}
+
+func (fs *FSCache) normalizeAccessEntry(protocol int, domain, path string, entry AccessEntry) AccessEntry {
+	if entry.URL == nil {
+		entry.URL = fs.buildAccessURL(protocol, domain, path)
+	}
+	if entry.RemoteLastModified.IsZero() && !entry.LastAccessed.IsZero() {
 		entry.RemoteLastModified = entry.LastAccessed
 	}
+	return entry
+}
 
-	entry.URL, err = url.Parse(fs.GetURL(protocol, domain, path))
+func (fs *FSCache) startAccessCacheFlushLoop() {
+	interval := fs.accessCacheFlushInterval
+	if interval <= 0 {
+		interval = accessCacheFlushIntervalDefault
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fs.flushAccessCache()
+			case <-fs.accessCacheStop:
+				return
+			}
+		}
+	}()
+}
+
+func (fs *FSCache) flushAccessCache() {
+	keys := make([]string, 0)
+	fs.accessCacheMux.RLock()
+	for key, record := range fs.accessCache {
+		if record.dirty {
+			keys = append(keys, key)
+		}
+	}
+	fs.accessCacheMux.RUnlock()
+
+	for _, key := range keys {
+		fs.accessCacheMux.Lock()
+		record, ok := fs.accessCache[key]
+		if !ok || !record.dirty {
+			fs.accessCacheMux.Unlock()
+			continue
+		}
+		recordCopy := *record
+		record.dirty = false
+		fs.accessCacheMux.Unlock()
+
+		if err := fs.writeAccessCacheRecord(&recordCopy); err != nil {
+			log.Printf("[WARN:ACCESS] failed to write access cache record: %v", err)
+			fs.accessCacheMux.Lock()
+			if current, ok := fs.accessCache[key]; ok && !current.dirty {
+				current.dirty = true
+			}
+			fs.accessCacheMux.Unlock()
+		}
+	}
+}
+
+func (fs *FSCache) writeAccessCacheRecord(record *accessCacheRecord) error {
+	metaPath := fs.accessCacheMetaPath(record.protocol, record.domain, record.path)
+	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
+		return err
+	}
+
+	urlString := ""
+	if record.entry.URL != nil {
+		urlString = record.entry.URL.String()
+	}
+	if urlString == "" {
+		urlString = fs.GetURL(record.protocol, record.domain, record.path)
+	}
+
+	payload := accessEntryJSON{
+		Protocol:           record.protocol,
+		Domain:             record.domain,
+		Path:               record.path,
+		URL:                urlString,
+		LastAccessed:       record.entry.LastAccessed,
+		LastChecked:        record.entry.LastChecked,
+		RemoteLastModified: record.entry.RemoteLastModified,
+		ETag:               record.entry.ETag,
+		Size:               record.entry.Size,
+		SHA256:             record.entry.SHA256,
+		MarkedForDeletion:  record.markedForDeletion,
+		MarkedAt:           record.markedAt,
+	}
+
+	data, err := json.Marshal(payload)
 	if err != nil {
+		return err
+	}
+
+	tmpPath := metaPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, metaPath)
+}
+
+func (fs *FSCache) loadAccessCacheRecord(protocol int, domain, path string) (*accessCacheRecord, bool) {
+	metaPath := fs.accessCacheMetaPath(protocol, domain, path)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, false
+	}
+
+	var payload accessEntryJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		log.Printf("[WARN:ACCESS] invalid metadata %s: %v", metaPath, err)
+		return nil, false
+	}
+
+	entry := AccessEntry{
+		LastAccessed:       payload.LastAccessed,
+		LastChecked:        payload.LastChecked,
+		RemoteLastModified: payload.RemoteLastModified,
+		ETag:               payload.ETag,
+		Size:               payload.Size,
+		SHA256:             payload.SHA256,
+	}
+
+	if payload.URL != "" {
+		if parsed, err := url.Parse(payload.URL); err == nil {
+			entry.URL = parsed
+		}
+	}
+
+	if entry.URL == nil {
+		entry.URL = fs.buildAccessURL(protocol, domain, path)
+	}
+
+	return &accessCacheRecord{
+		entry:             entry,
+		protocol:          protocol,
+		domain:            domain,
+		path:              path,
+		markedForDeletion: payload.MarkedForDeletion,
+		markedAt:          payload.MarkedAt,
+	}, true
+}
+
+func (fs *FSCache) loadAccessCacheRecordFromFile(metaPath string) (*accessCacheRecord, bool) {
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, false
+	}
+
+	var payload accessEntryJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		log.Printf("[WARN:ACCESS] invalid metadata %s: %v", metaPath, err)
+		return nil, false
+	}
+
+	entry := AccessEntry{
+		LastAccessed:       payload.LastAccessed,
+		LastChecked:        payload.LastChecked,
+		RemoteLastModified: payload.RemoteLastModified,
+		ETag:               payload.ETag,
+		Size:               payload.Size,
+		SHA256:             payload.SHA256,
+	}
+
+	protocol := payload.Protocol
+	domain := payload.Domain
+	path := payload.Path
+
+	if payload.URL != "" {
+		if parsed, err := url.Parse(payload.URL); err == nil {
+			entry.URL = parsed
+			if parsed.Host != "" {
+				domain = parsed.Host
+			}
+			if parsed.Path != "" {
+				path = parsed.Path
+			}
+			if parsed.Scheme != "" {
+				protocol = DetermineProtocol(parsed.Scheme)
+			}
+		}
+	}
+
+	if domain == "" || path == "" {
+		rel, err := filepath.Rel(fs.CachePath, metaPath)
+		if err == nil && strings.HasSuffix(rel, accessCacheMetaSuffix) {
+			rel = strings.TrimSuffix(rel, accessCacheMetaSuffix)
+			parts := strings.SplitN(rel, string(filepath.Separator), 2)
+			if len(parts) > 0 && domain == "" {
+				domain = parts[0]
+			}
+			if len(parts) == 2 && path == "" {
+				path = "/" + filepath.ToSlash(parts[1])
+			}
+		}
+	}
+
+	if domain == "" || path == "" {
+		return nil, false
+	}
+
+	if entry.URL == nil {
+		entry.URL = fs.buildAccessURL(protocol, domain, path)
+	}
+
+	return &accessCacheRecord{
+		entry:             entry,
+		protocol:          protocol,
+		domain:            domain,
+		path:              path,
+		markedForDeletion: payload.MarkedForDeletion,
+		markedAt:          payload.MarkedAt,
+	}, true
+}
+
+func (fs *FSCache) snapshotAccessCache() map[string]accessCacheRecord {
+	fs.accessCacheMux.RLock()
+	defer fs.accessCacheMux.RUnlock()
+
+	snapshot := make(map[string]accessCacheRecord, len(fs.accessCache))
+	for key, record := range fs.accessCache {
+		snapshot[key] = accessCacheRecord{
+			entry:             record.entry,
+			protocol:          record.protocol,
+			domain:            record.domain,
+			path:              record.path,
+			markedForDeletion: record.markedForDeletion,
+			markedAt:          record.markedAt,
+		}
+	}
+
+	return snapshot
+}
+
+func (fs *FSCache) loadAccessCacheRecordsFromDisk() (map[string]accessCacheRecord, error) {
+	entries := map[string]accessCacheRecord{}
+	if _, err := os.Stat(fs.CachePath); err != nil {
+		if os.IsNotExist(err) {
+			return entries, nil
+		}
+		return nil, err
+	}
+
+	err := filepath.WalkDir(fs.CachePath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, accessCacheMetaSuffix) {
+			return nil
+		}
+
+		record, ok := fs.loadAccessCacheRecordFromFile(path)
+		if !ok {
+			return nil
+		}
+
+		key := fs.accessCacheKey(record.protocol, record.domain, record.path)
+		entries[key] = *record
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func (fs *FSCache) collectAccessCacheRecords() ([]accessCacheRecord, error) {
+	diskEntries, err := fs.loadAccessCacheRecordsFromDisk()
+	if err != nil {
+		return nil, err
+	}
+
+	memoryEntries := fs.snapshotAccessCache()
+	for key, record := range memoryEntries {
+		diskEntries[key] = record
+	}
+
+	result := make([]accessCacheRecord, 0, len(diskEntries))
+	for _, record := range diskEntries {
+		result = append(result, record)
+	}
+
+	return result, nil
+}
+
+func (fs *FSCache) getAccessCacheRecord(protocol int, domain, path string) (*accessCacheRecord, bool) {
+	key := fs.accessCacheKey(protocol, domain, path)
+	fs.accessCacheMux.RLock()
+	record, ok := fs.accessCache[key]
+	fs.accessCacheMux.RUnlock()
+	if ok {
+		return record, true
+	}
+
+	record, ok = fs.loadAccessCacheRecord(protocol, domain, path)
+	if !ok {
+		return nil, false
+	}
+
+	fs.accessCacheMux.Lock()
+	if existing, ok := fs.accessCache[key]; ok {
+		fs.accessCacheMux.Unlock()
+		return existing, true
+	}
+	fs.accessCache[key] = record
+	fs.accessCacheMux.Unlock()
+
+	return record, true
+}
+
+func (fs *FSCache) setAccessCacheRecord(protocol int, domain, path string, update func(record *accessCacheRecord) bool) {
+	key := fs.accessCacheKey(protocol, domain, path)
+	fs.accessCacheMux.Lock()
+	record, ok := fs.accessCache[key]
+	if !ok {
+		record = &accessCacheRecord{protocol: protocol, domain: domain, path: path}
+		fs.accessCache[key] = record
+	}
+	if update(record) {
+		record.dirty = true
+	}
+	fs.accessCacheMux.Unlock()
+}
+
+// Get returns the AccessEntry information for a given protocol, domain, and path.
+func (fs *FSCache) Get(protocol int, domain, path string) (AccessEntry, bool) {
+	record, ok := fs.getAccessCacheRecord(protocol, domain, path)
+	if !ok {
 		return AccessEntry{}, false
 	}
 
+	entry := fs.normalizeAccessEntry(protocol, domain, path, record.entry)
 	return entry, true
 }
 
 // GetSHA256 returns the SHA256 hash for a given protocol, domain, and path of a
-// file. This is used to retrieve the SHA256 hash of a file from the database.
+// file. This is used to retrieve the SHA256 hash of a file from the cache metadata.
 func (fs *FSCache) GetSHA256(protocol int, domain, path string) (string, bool) {
-	row := fs.db.QueryRow(
-		"SELECT f.sha256 FROM files f JOIN domains d ON f.domain = d.id WHERE d.protocol = ? AND d.domain = ? AND f.path = ?",
-		protocol,
-		domain,
-		path,
-	)
-
-	var sha256 string
-	err := row.Scan(&sha256)
-	if err != nil {
+	record, ok := fs.getAccessCacheRecord(protocol, domain, path)
+	if !ok {
 		return "", false
 	}
 
-	return sha256, true
+	return record.entry.SHA256, true
 }
 
 // SetSHA256 sets the SHA256 hash for a given protocol, domain, and path of a
-// file. This is used to store the SHA256 hash of a file in the database.
+// file. This is used to store the SHA256 hash of a file in the cache metadata.
 func (fs *FSCache) SetSHA256(protocol int, domain, path, sha256 string) error {
-	_, err := fs.db.Exec(
-		"UPDATE files SET sha256 = ? WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?",
-		sha256,
-		protocol,
-		domain,
-		path,
-	)
-
-	return err
+	fs.setAccessCacheRecord(protocol, domain, path, func(record *accessCacheRecord) bool {
+		changed := record.entry.SHA256 != sha256
+		record.entry.SHA256 = sha256
+		if record.entry.URL == nil {
+			record.entry.URL = fs.buildAccessURL(protocol, domain, path)
+			changed = true
+		}
+		return changed
+	})
+	return nil
 }
 
 // Set sets the access information for a given key.
 func (fs *FSCache) Set(protocol int, domain, path string, entry AccessEntry) error {
-	// Select the Domain ID for the given protocol and domain
-	var domainID int64
-	if err := fs.db.QueryRow("SELECT `id` FROM `domains` WHERE `protocol` = ? AND `domain` = ?", protocol, domain).Scan(&domainID); err != nil {
-		// Insert domain with protocol into the domains table as the previous
-		// query failed, most likely because the domain does not exist yet.
-		ins, err := fs.db.Exec("INSERT IGNORE INTO `domains` (`protocol`, `domain`) VALUES (?, ?)", protocol, domain)
-		if err != nil {
-			return err
-		}
-		// Get the last inserted ID, which is the domain ID
-		domainID, err = ins.LastInsertId()
-		if err != nil {
-			return err
-		}
+	if entry.URL == nil {
+		entry.URL = fs.buildAccessURL(protocol, domain, path)
 	}
-
-	// Insert the file if it does not exist
-	if _, err := fs.db.Exec("INSERT INTO `files` (`domain`, `path`, `url`, `size`, `etag`, `modified`, `sha256`) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `url` = VALUES(`url`), `size` = VALUES(`size`), `etag` = VALUES(`etag`), `modified` = VALUES(`modified`), `sha256` = VALUES(`sha256`)",
-		domainID,
-		path,
-		entry.URL.String(),
-		entry.Size,
-		entry.ETag,
-		entry.RemoteLastModified.Format("2006-01-02 15:04:05"),
-		entry.SHA256,
-	); err != nil {
-		return err
-	}
-
-	// Get ID of the file just inserted or updated
-	var fileID int64
-	if err := fs.db.QueryRow("SELECT `id` FROM `files` WHERE `domain` = ? AND `path` = ?", domainID, path).Scan(&fileID); err != nil {
-		return err
-	}
-
-	// Insert or update the access cache entry
-	if _, err := fs.db.Exec("INSERT INTO access_cache (file, last_access, last_check) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE last_access = VALUES(last_access), last_check = VALUES(last_check)",
-		fileID,
-		entry.LastAccessed.Format("2006-01-02 15:04:05"),
-		entry.LastChecked.Format("2006-01-02 15:04:05"),
-	); err != nil {
-		return err
-	}
-
+	fs.setAccessCacheRecord(protocol, domain, path, func(record *accessCacheRecord) bool {
+		record.entry = entry
+		record.markedForDeletion = false
+		record.markedAt = time.Time{}
+		return true
+	})
 	return nil
 }
 
 // Delete deletes the access information for a given key.
 func (fs *FSCache) Delete(protocol int, domain, path string) {
-	_, _ = fs.db.Exec("DELETE FROM access_cache WHERE file = (SELECT id FROM files WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?)", protocol, domain, path)
+	key := fs.accessCacheKey(protocol, domain, path)
+	fs.accessCacheMux.Lock()
+	delete(fs.accessCache, key)
+	fs.accessCacheMux.Unlock()
+
+	metaPath := fs.accessCacheMetaPath(protocol, domain, path)
+	_ = os.Remove(metaPath)
 }
 
 // Hit updates the access information for a given key. Most usually called if
 // the ressource was accessed.
 func (fs *FSCache) Hit(protocol int, domain, key string) error {
-	_, err := fs.db.Exec("UPDATE access_cache SET last_access = ? WHERE file = (SELECT id FROM files WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?)", time.Now(), protocol, domain, key)
-	if err != nil {
-		return err
+	record, ok := fs.getAccessCacheRecord(protocol, domain, key)
+	if !ok {
+		return nil
 	}
+
+	fs.accessCacheMux.Lock()
+	record.entry.LastAccessed = time.Now()
+	record.dirty = true
+	fs.accessCacheMux.Unlock()
 
 	return nil
 }
 
 // UpdateLastChecked updates the last checked time for the given key.
 func (fs *FSCache) UpdateLastChecked(protocol int, domain, path string) error {
-	_, err := fs.db.Exec("UPDATE access_cache SET last_check = ? WHERE file = (SELECT id FROM files WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?)", time.Now(), protocol, domain, path)
-	if err != nil {
-		return err
+	record, ok := fs.getAccessCacheRecord(protocol, domain, path)
+	if !ok {
+		return nil
 	}
+
+	fs.accessCacheMux.Lock()
+	record.entry.LastChecked = time.Now()
+	record.dirty = true
+	fs.accessCacheMux.Unlock()
 
 	return nil
 }
@@ -192,38 +524,38 @@ func (fs *FSCache) GetURL(protocol int, domain, path string) string {
 }
 
 // UpdateFile updates the file for the given key.
-func (fs *FSCache) UpdateFile(protocol int, domain, path, url string, lastModified time.Time, etag string, size int64) {
-	_, err := fs.db.Exec(
-		"UPDATE files SET url = ?, modified = ?, etag = ?, size = ? WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?",
-		url,
-		lastModified.Format("2006-01-02 15:04:05"),
-		etag,
-		size,
-		protocol,
-		domain,
-		path,
-	)
+func (fs *FSCache) UpdateFile(protocol int, domain, path, urlString string, lastModified time.Time, etag string, size int64) {
+	parsedURL, err := url.Parse(urlString)
 	if err != nil {
-		log.Printf("[ERROR] Failed to update file: %v", err)
-		return
+		parsedURL = fs.buildAccessURL(protocol, domain, path)
 	}
+
+	fs.setAccessCacheRecord(protocol, domain, path, func(record *accessCacheRecord) bool {
+		record.entry.URL = parsedURL
+		record.entry.RemoteLastModified = lastModified
+		record.entry.ETag = etag
+		record.entry.Size = size
+		record.markedForDeletion = false
+		record.markedAt = time.Time{}
+		return true
+	})
 }
 
 // AddURLIfNotExists adds the URL to the given key if the url isn't already
 // stored with the entry.
-func (fs *FSCache) AddURLIfNotExists(protocol int, domain, path, url string) error {
-	// Add domain with protocol to the domains table if it does not exist
-	_, _ = fs.db.Exec("INSERT IGNORE INTO `domains` (`protocol`, `domain`) VALUES (?, ?)", protocol, domain)
-
-	// Select the Domain ID for the given protocol and domain
-	var domainID int
-	if err := fs.db.QueryRow("SELECT `id` FROM `domains` WHERE `protocol` = ? AND `domain` = ?", protocol, domain).Scan(&domainID); err != nil {
-		return err
+func (fs *FSCache) AddURLIfNotExists(protocol int, domain, path, urlString string) error {
+	parsedURL, err := url.Parse(urlString)
+	if err != nil {
+		parsedURL = fs.buildAccessURL(protocol, domain, path)
 	}
 
-	// Insert the file if it does not exist
-	_, _ = fs.db.Exec("INSERT INTO `files` (`domain`, `path`, `url`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `url` = VALUES(`url`)", domainID, path, url)
-
+	fs.setAccessCacheRecord(protocol, domain, path, func(record *accessCacheRecord) bool {
+		if record.entry.URL == nil || record.entry.URL.String() != parsedURL.String() {
+			record.entry.URL = parsedURL
+			return true
+		}
+		return false
+	})
 	return nil
 }
 
@@ -306,14 +638,23 @@ func (fs *FSCache) CreateExclusiveWriteLock(protocol int, domain, path string) b
 
 // MarkForDeletion marks the given domain and path for deletion.
 func (fs *FSCache) MarkForDeletion(protocol int, domain, path string) {
-	_, err := fs.db.Exec("INSERT INTO files_delete (file, time) VALUES ((SELECT id FROM files WHERE domain = (SELECT id FROM domains WHERE protocol = ? AND domain = ?) AND path = ?), NOW())", protocol, domain, path)
-	if err != nil {
-		log.Printf("[ERROR] Failed to mark file for deletion: %v", err)
+	record, ok := fs.getAccessCacheRecord(protocol, domain, path)
+	if !ok {
+		return
 	}
+
+	fs.accessCacheMux.Lock()
+	record.markedForDeletion = true
+	record.markedAt = time.Now()
+	record.dirty = true
+	fs.accessCacheMux.Unlock()
 }
 
 // TrackRequest tracks a request in the database.
 func (fs *FSCache) TrackRequest(cacheHit bool, transferred int64) error {
+	if fs.db == nil {
+		return nil
+	}
 	return dbc.TrackRequest(fs.db, cacheHit, transferred)
 }
 

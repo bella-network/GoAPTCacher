@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-// DeleteFile deletes a file from the cache including references in the database.
+// DeleteFile deletes a file from the cache including references in the metadata.
 func (c *FSCache) DeleteFile(file *url.URL) error {
 	// Get the local path of the file
 	localPath := c.buildLocalPath(file)

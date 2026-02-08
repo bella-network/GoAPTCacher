@@ -35,11 +35,16 @@ type FSCache struct {
 	memoryFileReadLock     map[string]time.Time
 	memoryFileWriteLockMux sync.RWMutex
 	memoryFileWriteLock    map[string]time.Time
+
+	accessCacheMux           sync.RWMutex
+	accessCache              map[string]*accessCacheRecord
+	accessCacheFlushInterval time.Duration
+	accessCacheStop          chan struct{}
 }
 
 // NewFSCache creates a new FSCache with the given cache path.
 func NewFSCache(cachePath string, db *sql.DB) *FSCache {
-	return &FSCache{
+	cache := &FSCache{
 		client: &http.Client{
 			Timeout: time.Hour, // Timeout every extreme long requests
 			Transport: &http.Transport{
@@ -52,7 +57,14 @@ func NewFSCache(cachePath string, db *sql.DB) *FSCache {
 		db:                  db,
 		memoryFileReadLock:  make(map[string]time.Time),
 		memoryFileWriteLock: make(map[string]time.Time),
+		accessCache:         make(map[string]*accessCacheRecord),
+		accessCacheStop:     make(chan struct{}),
 	}
+
+	cache.accessCacheFlushInterval = accessCacheFlushIntervalDefault
+	cache.startAccessCacheFlushLoop()
+
+	return cache
 }
 
 // SetExpirationDays sets the expiration days for the cache, this will also
