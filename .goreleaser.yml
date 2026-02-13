@@ -87,9 +87,6 @@ nfpms:
 
     section: net
     priority: optional
-    recommends:
-      - "mariadb-server | mysql-server"
-
 
     deb:
       fields:
