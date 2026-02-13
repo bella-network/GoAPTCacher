@@ -118,8 +118,8 @@ func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 		return err
 	}
 
-	// Create a map of all files in the database
-	filesInDatabase := map[string]bool{}
+	// Create a map of all files found in cache metadata.
+	filesInMetadata := map[string]bool{}
 	entries, err := c.collectAccessCacheRecords()
 	if err != nil {
 		return err
@@ -132,12 +132,12 @@ func (c *FSCache) deleteUnreferencedFilesByFilesystem() error {
 		if err != nil {
 			continue
 		}
-		filesInDatabase[rel] = true
+		filesInMetadata[rel] = true
 	}
 
-	// Delete all files that are not in the database
+	// Delete all files that are not in metadata.
 	for _, file := range files {
-		if _, ok := filesInDatabase[file]; !ok {
+		if _, ok := filesInMetadata[file]; !ok {
 			err := os.Remove(c.CachePath + "/" + file)
 			if err != nil {
 				return err

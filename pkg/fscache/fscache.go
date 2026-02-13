@@ -9,7 +9,6 @@
 package fscache
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,7 +24,6 @@ import (
 type FSCache struct {
 	client    *http.Client
 	CachePath string
-	db        *sql.DB // Database connection for access cache
 
 	CustomCachePath func(r *url.URL) string
 
@@ -40,10 +38,17 @@ type FSCache struct {
 	accessCache              map[string]*accessCacheRecord
 	accessCacheFlushInterval time.Duration
 	accessCacheStop          chan struct{}
+
+	statsMux           sync.RWMutex
+	statsByDate        map[string]*statsEntry
+	statsFlushInterval time.Duration
+	statsStop          chan struct{}
+	statsDirty         bool
+	statsRevision      uint64
 }
 
 // NewFSCache creates a new FSCache with the given cache path.
-func NewFSCache(cachePath string, db *sql.DB) *FSCache {
+func NewFSCache(cachePath string) *FSCache {
 	cache := &FSCache{
 		client: &http.Client{
 			Timeout: time.Hour, // Timeout every extreme long requests
@@ -54,15 +59,21 @@ func NewFSCache(cachePath string, db *sql.DB) *FSCache {
 			},
 		},
 		CachePath:           cachePath,
-		db:                  db,
 		memoryFileReadLock:  make(map[string]time.Time),
 		memoryFileWriteLock: make(map[string]time.Time),
 		accessCache:         make(map[string]*accessCacheRecord),
 		accessCacheStop:     make(chan struct{}),
+		statsByDate:         make(map[string]*statsEntry),
+		statsStop:           make(chan struct{}),
 	}
 
 	cache.accessCacheFlushInterval = accessCacheFlushIntervalDefault
 	cache.startAccessCacheFlushLoop()
+	cache.statsFlushInterval = statsFlushIntervalDefault
+	if err := cache.loadStatsFromDisk(); err != nil {
+		log.Printf("[WARN:STATS] failed to load persisted stats: %v", err)
+	}
+	cache.startStatsFlushLoop()
 
 	return cache
 }
@@ -78,11 +89,6 @@ func (c *FSCache) SetExpirationDays(days uint64) {
 		log.Printf("[INFO:EXPIRE] Activated file expiration\n")
 		go c.expireUnusedFiles()
 	}
-}
-
-// GetDatabaseConnection returns the database connection of the FSCache.
-func (c *FSCache) GetDatabaseConnection() *sql.DB {
-	return c.db
 }
 
 // buildLocalPath builds the local path for the given request.

@@ -5,13 +5,6 @@ listen_port_secure: 8091
 alternative_ports:
   - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
 
-database:
-  hostname: "localhost"
-  username: "goaptcacher"
-  password: "goaptcacher"
-  database: "goaptcacher"
-  port: 3306
-
 domains:
   - "archive.ubuntu.com" # Ubuntu archive
   - "security.ubuntu.com" # Ubuntu security
@@ -60,3 +53,12 @@ index:
   enable: true
   hostnames:
     - "myhostname"
+
+debug:
+  enable: false
+  allow_remote: false
+  log_interval_seconds: 60
+  pprof:
+    enable: false
+    interval_seconds: 60
+    retain: 1440

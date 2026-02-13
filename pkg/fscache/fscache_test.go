@@ -14,7 +14,7 @@ import (
 
 func newTestFSCache(t *testing.T) *FSCache {
 	t.Helper()
-	return NewFSCache(t.TempDir(), nil)
+	return NewFSCache(t.TempDir())
 }
 
 func mustParseURL(t *testing.T, raw string) *url.URL {

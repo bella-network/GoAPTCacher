@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	_ "embed"
 	"fmt"
 	"log"
@@ -9,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
+	"syscall"
 
 	web "gitlab.com/bella.network/goaptcacher/lib/web"
 	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
@@ -212,62 +211,21 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 // httpPageStats returns the page content for the stats page containing the
 // cache statistics of this proxy server.
 func httpPageStats() string {
-	db := cache.GetDatabaseConnection()
-
-	// Query the database for some statistics
 	var filesCached, totalSize uint64
-	err := db.QueryRow("SELECT COUNT(*), SUM(size) FROM files").Scan(&filesCached, &totalSize)
+	filesCached, totalSize, err := cache.GetCacheUsage()
 	if err != nil {
-		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
+		log.Printf("[ERROR:WEB] Error collecting cache usage: %s\n", err)
 	}
 
-	// Get total cache statistics
-	var totalRequests, totalHits, totalMisses, totalTrafficUp, totalTrafficDown, totalTunnel uint64
-	err = db.QueryRow("SELECT SUM(requests), SUM(hits), SUM(misses), SUM(tunnel), SUM(traffic_down), SUM(traffic_up) FROM stats").Scan(&totalRequests, &totalHits, &totalMisses, &totalTunnel, &totalTrafficDown, &totalTrafficUp)
-	if err != nil {
-		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
-	}
+	statsSnapshot := cache.GetStatsSnapshot(14)
+	totalRequests := statsSnapshot.Totals.Requests
+	totalHits := statsSnapshot.Totals.Hits
+	totalMisses := statsSnapshot.Totals.Misses
+	totalTunnel := statsSnapshot.Totals.Tunnel
+	totalTrafficDown := statsSnapshot.Totals.TrafficDown
+	totalTrafficUp := statsSnapshot.Totals.TrafficUp
 
-	// From stats, get last 14 days of traffic
-	type statsEntry struct {
-		Date        sql.NullTime
-		Requests    uint64
-		Hits        uint64
-		Misses      uint64
-		Tunnel      uint64
-		TrafficUp   uint64
-		TrafficDown uint64
-	}
-	var entryList []statsEntry
-	rows, err := db.Query("SELECT date, requests, hits, misses, tunnel, traffic_down, traffic_up FROM stats ORDER BY date DESC LIMIT 14")
-	if err != nil {
-		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var entry statsEntry
-		err = rows.Scan(&entry.Date, &entry.Requests, &entry.Hits, &entry.Misses, &entry.Tunnel, &entry.TrafficDown, &entry.TrafficUp)
-		if err != nil {
-			log.Printf("[ERROR:WEB] Error scanning database row: %s\n", err)
-		}
-
-		entryList = append(entryList, entry)
-	}
-
-	// Get oldest date from the stats table
-	var oldestDate sql.NullTime
-	err = db.QueryRow("SELECT date FROM stats ORDER BY date ASC LIMIT 1").Scan(&oldestDate)
-	if err != nil {
-		log.Printf("[ERROR:WEB] Error querying database: %s\n", err)
-	}
-
-	var oldestDateParsed time.Time
-	if oldestDate.Valid {
-		oldestDateParsed = oldestDate.Time
-	} else {
-		oldestDateParsed = time.Now()
-	}
+	_, _, _ = getStorageInfo()
 
 	response := `<h2>Cache statistics</h2>
 	<p>
@@ -276,13 +234,13 @@ func httpPageStats() string {
 	</p>
 	<h3>Lifetime statistics</h3>
 	<p>
-		The following statistics are available since the first request made to this server which was on ` + oldestDateParsed.Format("2006-01-02") + `.
+		The following statistics are available since the first request made to this server which was on ` + statsSnapshot.OldestDay.Format("2006-01-02") + `.
 	<ul>`
 	response += fmt.Sprintf("<li>Total files cached: %d</li>", filesCached)
 	response += fmt.Sprintf("<li>Total size cached: %s</li>", prettifyBytes(totalSize))
 	response += fmt.Sprintf("<li>Total requests: %d</li>", totalRequests)
-	response += fmt.Sprintf("<li>Total hits: %d (%d%%)</li>", totalHits, 100*totalHits/totalRequests)
-	response += fmt.Sprintf("<li>Total misses: %d (%d%%)</li>", totalMisses, 100*totalMisses/totalRequests)
+	response += fmt.Sprintf("<li>Total hits: %d (%d%%)</li>", totalHits, safePercent(totalHits, totalRequests))
+	response += fmt.Sprintf("<li>Total misses: %d (%d%%)</li>", totalMisses, safePercent(totalMisses, totalRequests))
 	response += fmt.Sprintf("<li>Total tunnel requests: %d</li>", totalTunnel)
 	response += fmt.Sprintf("<li>Total traffic served to clients: %s</li>", prettifyBytes(totalTrafficUp))
 	response += fmt.Sprintf("<li>Total traffic fetched from repo servers: %s</li>", prettifyBytes(totalTrafficDown))
@@ -299,22 +257,19 @@ func httpPageStats() string {
 				<th>Traffic served</th>
 				<th>Traffic fetched</th>
 			</tr>`
-	for _, entry := range entryList {
-		if err != nil {
-			log.Printf("[ERROR:WEB] Error parsing date: %s\n", err)
-		}
+	for _, entry := range statsSnapshot.Daily {
 		response += fmt.Sprintf(
 			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d</td><td>%s</td><td>%s (%d%%)</td></tr>",
-			entry.Date.Time.Format("2006-01-02"),
+			entry.Date.Format("2006-01-02"),
 			entry.Requests,
 			entry.Hits,
-			100*entry.Hits/entry.Requests,
+			safePercent(entry.Hits, entry.Requests),
 			entry.Misses,
-			100*entry.Misses/entry.Requests,
+			safePercent(entry.Misses, entry.Requests),
 			entry.Tunnel,
 			prettifyBytes(entry.TrafficUp),
 			prettifyBytes(entry.TrafficDown),
-			100*entry.TrafficDown/entry.TrafficUp,
+			safePercent(entry.TrafficDown, entry.TrafficUp),
 		)
 
 	}
@@ -429,6 +384,13 @@ func prettifyBytes(bytes uint64) string {
 	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+func safePercent(value uint64, total uint64) uint64 {
+	if total == 0 {
+		return 0
+	}
+	return (value * 100) / total
+}
+
 // getLocalIP is a helper function that returns the local IP address of the
 // server by checking all network interfaces. Loopback addresses are ignored.
 func getLocalIP() (string, error) {
@@ -469,4 +431,17 @@ func httpServeCertificate(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the public certificate file
 	http.ServeFile(w, r, config.HTTPS.CertificatePublicKey)
+}
+
+// getStorageInfo returns the total and used storage space of the cache directory.
+func getStorageInfo() (total uint64, used uint64, err error) {
+	var stat syscall.Statfs_t
+	err = syscall.Statfs(config.CacheDirectory, &stat)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	total = stat.Blocks * uint64(stat.Bsize)
+	used = (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+	return total, used, nil
 }

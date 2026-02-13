@@ -96,7 +96,7 @@ That's why I created an alternative with this program that is more in line with 
 The configuration file is structured in YAML format and contains the following example configuration. This is a sample configuration file with explanations for each section.
 
 ```yaml
-# The main cache directory where the packages and database are stored
+# The main cache directory where packages and metadata are stored
 cache_directory: "/var/cache/goaptcacher"
 
 # The main listening port for HTTP connections (default: 8090)
@@ -109,14 +109,8 @@ listen_port_secure: 8091
 alternative_ports:
   - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
 
-# MariabDB/MySQL connection details (for internal indexing and stats)
-# The user must have access to create tables and indexes, these are created automatically if they do not exist.
-database:
-  hostname: "127.0.0.1"
-  username: "goaptcacher"
-  password: "this-Is-Not-a-good-password--use-something-better!"
-  database: "goaptcacher"
-  port: 3306
+# Usage and traffic stats are kept in memory and flushed periodically to
+# cache_directory/.stats.json.
 
 # List of domains which are allowed to be cached. Requests to other domains will be denied.
 # Supports bare domains and leading-dot wildcards (.debian.org).

@@ -215,16 +215,20 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	// Check if the file has changed. For this, we compare the Last-Modified
 	// header and the ETag header with the last known values. If Last-Modified
 	// is older than the locally stored file, we assume the file has not
-	// changed. Only perform this check if the Last-Modified header is
-	// available.
-	var lastModified time.Time
-	if lastmod := resp.Header.Get("Last-Modified"); lastmod != "" && !lastAccess.RemoteLastModified.IsZero() {
-		lastModified, err := time.Parse(http.TimeFormat, lastmod)
-		if err == nil && lastModified.Before(lastAccess.RemoteLastModified) {
-			// Update the last checked time
-			c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
-			log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
-			return false, nil
+	// changed.
+	lastModified := lastAccess.RemoteLastModified
+	if lastmod := resp.Header.Get("Last-Modified"); lastmod != "" {
+		parsedLastModified, parseErr := time.Parse(http.TimeFormat, lastmod)
+		if parseErr != nil {
+			log.Printf("[WARN:REFRESH:LAST-MODIFIED] %s%s invalid Last-Modified header %q: %v\n", localFile.Host, localFile.Path, lastmod, parseErr)
+		} else {
+			lastModified = parsedLastModified
+			if !lastAccess.RemoteLastModified.IsZero() && lastModified.Before(lastAccess.RemoteLastModified) {
+				// Update the last checked time
+				c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+				log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
+				return false, nil
+			}
 		}
 	}
 

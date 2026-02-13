@@ -6,6 +6,8 @@
 
 # Cached files
 /cache/**
+/.gocache/**
 
 # Debug Builds
 __debug_bin**
+goaptcacher

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gitlab.com/bella.network/goaptcacher/lib/dbc"
 )
 
 // AccessEntry is an entry in the accessCache.
@@ -83,9 +82,6 @@ func (fs *FSCache) accessCacheMetaPath(protocol int, domain, path string) string
 func (fs *FSCache) normalizeAccessEntry(protocol int, domain, path string, entry AccessEntry) AccessEntry {
 	if entry.URL == nil {
 		entry.URL = fs.buildAccessURL(protocol, domain, path)
-	}
-	if entry.RemoteLastModified.IsZero() && !entry.LastAccessed.IsZero() {
-		entry.RemoteLastModified = entry.LastAccessed
 	}
 	return entry
 }
@@ -533,6 +529,7 @@ func (fs *FSCache) UpdateFile(protocol int, domain, path, urlString string, last
 	fs.setAccessCacheRecord(protocol, domain, path, func(record *accessCacheRecord) bool {
 		record.entry.URL = parsedURL
 		record.entry.RemoteLastModified = lastModified
+		record.entry.LastChecked = time.Now()
 		record.entry.ETag = etag
 		record.entry.Size = size
 		record.markedForDeletion = false
@@ -648,14 +645,6 @@ func (fs *FSCache) MarkForDeletion(protocol int, domain, path string) {
 	record.markedAt = time.Now()
 	record.dirty = true
 	fs.accessCacheMux.Unlock()
-}
-
-// TrackRequest tracks a request in the database.
-func (fs *FSCache) TrackRequest(cacheHit bool, transferred int64) error {
-	if fs.db == nil {
-		return nil
-	}
-	return dbc.TrackRequest(fs.db, cacheHit, transferred)
 }
 
 // GetFileByPath returns the file by the given path. OriginURL is the URL of the

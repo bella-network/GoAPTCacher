@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"gitlab.com/bella.network/goaptcacher/lib/dbc"
 )
 
 // handleTUNNEL tunnels the request to the target host without any caching or
@@ -62,7 +60,9 @@ func handleTUNNEL(w http.ResponseWriter, r *http.Request) {
 
 	// Log transfer statistics
 	go func(download int64) {
-		dbc.TrackTunnelRequest(cache.GetDatabaseConnection(), download)
+		if err := cache.TrackTunnelRequest(download); err != nil {
+			log.Printf("[WARN:TUNNEL] failed to track tunnel request: %v\n", err)
+		}
 	}(sizeIn + sizeOut)
 }
 
