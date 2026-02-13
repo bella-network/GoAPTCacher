@@ -11,12 +11,7 @@ import (
 func (c *FSCache) serveHEADRequest(r *http.Request, w http.ResponseWriter) {
 
 	// Define the local path for the file
-	localFile := fmt.Sprintf(
-		"%s/%s/%s",
-		c.CachePath,
-		r.URL.Host,
-		r.URL.Path,
-	)
+	localFile := c.buildLocalPath(r.URL)
 
 	// Check if the file exists in the cache
 	if fi, err := os.Stat(localFile); err == nil {

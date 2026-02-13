@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +99,25 @@ func (c *FSCache) buildLocalPath(rq *url.URL) string {
 		return c.CustomCachePath(rq)
 	}
 
-	return c.CachePath + "/" + rq.Host + rq.Path
+	base := filepath.Clean(c.CachePath)
+
+	host := rq.Hostname()
+	if host == "" {
+		host = rq.Host
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.Trim(host, ".")
+	if host == "" {
+		host = "_invalid_host"
+	}
+	host = strings.ReplaceAll(host, "/", "_")
+	host = strings.ReplaceAll(host, "\\", "_")
+
+	normalizedPath := strings.ReplaceAll(rq.Path, "\\", "/")
+	cleanPath := path.Clean("/" + normalizedPath)
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+
+	return filepath.Join(base, host, filepath.FromSlash(cleanPath))
 }
 
 // validateRequest validates the given request and returns an error if the

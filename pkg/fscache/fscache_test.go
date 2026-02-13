@@ -73,6 +73,46 @@ func TestBuildLocalPath(t *testing.T) {
 	}
 }
 
+func TestBuildLocalPathPreventsTraversal(t *testing.T) {
+	cache := newTestFSCache(t)
+
+	u := mustParseURL(t, "https://cdn.example.com/../../../../tmp/pwn")
+	got := cache.buildLocalPath(u)
+
+	rel, err := filepath.Rel(cache.CachePath, got)
+	if err != nil {
+		t.Fatalf("filepath.Rel() error = %v", err)
+	}
+	if strings.HasPrefix(rel, "..") {
+		t.Fatalf("buildLocalPath() escaped cache directory: %q", got)
+	}
+
+	want := filepath.Join(cache.CachePath, "cdn.example.com", "tmp", "pwn")
+	if got != want {
+		t.Fatalf("buildLocalPath() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildLocalPathNormalizesEncodedTraversalAndBackslashes(t *testing.T) {
+	cache := newTestFSCache(t)
+
+	u := mustParseURL(t, "https://cdn.example.com/%2e%2e/%2e%2e/dir%5c..%5ctest/file")
+	got := cache.buildLocalPath(u)
+
+	rel, err := filepath.Rel(cache.CachePath, got)
+	if err != nil {
+		t.Fatalf("filepath.Rel() error = %v", err)
+	}
+	if strings.HasPrefix(rel, "..") {
+		t.Fatalf("buildLocalPath() escaped cache directory: %q", got)
+	}
+
+	want := filepath.Join(cache.CachePath, "cdn.example.com", "test", "file")
+	if got != want {
+		t.Fatalf("buildLocalPath() = %q, want %q", got, want)
+	}
+}
+
 func TestBuildLocalPathWithCustomFunc(t *testing.T) {
 	cache := newTestFSCache(t)
 	cache.CustomCachePath = func(u *url.URL) string {
