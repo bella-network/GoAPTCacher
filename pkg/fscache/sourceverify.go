@@ -40,119 +40,178 @@ func (c *FSCache) runSourcesVerification() {
 	}
 }
 
+type verificationRecord struct {
+	protocol int
+	domain   string
+	path     string
+	entry    AccessEntry
+}
+
+type releaseReference struct {
+	domain string
+	url    string
+}
+
 // verifySources performs a single verification run.
 func (c *FSCache) verifySources() error {
-	type releaseEntry struct {
-		domain   string
-		url      string
-		etag     string
-		protocol int
-	}
-
 	entries, err := c.collectAccessCacheRecords()
 	if err != nil {
 		return err
 	}
 
-	releases := []releaseEntry{}
-	for _, record := range entries {
-		path := record.path
-		if path == "" && record.entry.URL != nil {
-			path = record.entry.URL.Path
-		}
-		if !strings.HasSuffix(path, "/InRelease") {
-			continue
-		}
-
-		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
-		if entry.URL == nil {
-			continue
-		}
-		domain := record.domain
-		if domain == "" {
-			domain = entry.URL.Host
-		}
-
-		releases = append(releases, releaseEntry{
-			domain:   domain,
-			url:      entry.URL.String(),
-			etag:     entry.ETag,
-			protocol: record.protocol,
-		})
-	}
-
-	packagesChecksums := make(map[string]string)
-
-	for _, r := range releases {
-		sums, err := fetchReleaseSHA256(c.client, r.url)
-		if err != nil {
-			log.Printf("[WARN:VERIFY] failed to fetch release %s: %v", r.url, err)
-			continue
-		}
-		base := strings.TrimSuffix(r.url, "InRelease")
-		domain := r.domain
-		for _, sum := range sums {
-			if strings.HasSuffix(sum.file, "Packages") || strings.HasSuffix(sum.file, "Packages.gz") || strings.HasSuffix(sum.file, "Packages.xz") || strings.HasSuffix(sum.file, "Packages.bz2") {
-				newUrl := base + sum.file
-				pkgs, err := fetchPackagesIndex(c.client, newUrl)
-				if err != nil {
-					log.Printf("[WARN:VERIFY] failed to fetch packages %s: %v", newUrl, err)
-					continue
-				}
-
-				base2, err := url.Parse(base + "../../")
-				if err != nil {
-					log.Printf("[WARN:VERIFY] failed to parse base URL %s: %v", base, err)
-					continue
-				}
-
-				// Resolve the URL references to get the correct domain
-				base3 := base2.ResolveReference(&url.URL{Path: base2.Path})
-
-				for p, h := range pkgs {
-					packagesChecksums[domain+base3.Path+p] = h
-				}
-			}
-		}
-	}
-
-	// Now verify the cached .deb files against the packagesChecksums map.
-	for _, record := range entries {
-		path := record.path
-		if path == "" && record.entry.URL != nil {
-			path = record.entry.URL.Path
-		}
-		if !strings.HasSuffix(path, ".deb") {
-			continue
-		}
-
-		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
-		if entry.URL == nil {
-			continue
-		}
-		domain := record.domain
-		if domain == "" {
-			domain = entry.URL.Host
-		}
-
-		expected, ok := packagesChecksums[domain+path]
-		if !ok {
-			log.Printf("[INFO:VERIFY] %s%s not found in packages index, marking for deletion", domain, path)
-			c.MarkForDeletion(record.protocol, domain, path)
-			continue
-		}
-		filePath := c.buildLocalPath(entry.URL)
-		h, err := sha256File(filePath)
-		if err != nil {
-			continue
-		}
-		if h != expected {
-			log.Printf("[INFO:VERIFY] %s%s checksum mismatch: expected %s, got %s, marking for deletion", domain, path, expected, h)
-			c.MarkForDeletion(record.protocol, domain, path)
-		}
-	}
+	// Normalize once so the remaining steps can be simple, focused passes.
+	records := c.normalizeVerificationRecords(entries)
+	releases := collectReleaseReferences(records)
+	packageChecksums := c.collectPackageChecksums(releases)
+	c.verifyDebEntries(records, packageChecksums)
 
 	return nil
+}
+
+func (c *FSCache) normalizeVerificationRecords(records []accessCacheRecord) []verificationRecord {
+	result := make([]verificationRecord, 0, len(records))
+	for _, record := range records {
+		normalized, ok := c.normalizeVerificationRecord(record)
+		if !ok {
+			continue
+		}
+		result = append(result, normalized)
+	}
+	return result
+}
+
+func (c *FSCache) normalizeVerificationRecord(record accessCacheRecord) (verificationRecord, bool) {
+	// Keep path resolution compatible with the previous implementation.
+	path := record.path
+	if path == "" && record.entry.URL != nil {
+		path = record.entry.URL.Path
+	}
+
+	entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
+	if entry.URL == nil {
+		return verificationRecord{}, false
+	}
+
+	domain := record.domain
+	if domain == "" {
+		domain = entry.URL.Host
+	}
+
+	return verificationRecord{
+		protocol: record.protocol,
+		domain:   domain,
+		path:     path,
+		entry:    entry,
+	}, true
+}
+
+func collectReleaseReferences(records []verificationRecord) []releaseReference {
+	releases := make([]releaseReference, 0)
+	for _, record := range records {
+		if !strings.HasSuffix(record.path, "/InRelease") {
+			continue
+		}
+		releases = append(releases, releaseReference{
+			domain: record.domain,
+			url:    record.entry.URL.String(),
+		})
+	}
+	return releases
+}
+
+func (c *FSCache) collectPackageChecksums(releases []releaseReference) map[string]string {
+	checksums := make(map[string]string)
+	for _, release := range releases {
+		c.collectReleasePackageChecksums(release, checksums)
+	}
+	return checksums
+}
+
+func (c *FSCache) collectReleasePackageChecksums(release releaseReference, checksums map[string]string) {
+	sums, err := fetchReleaseSHA256(c.client, release.url)
+	if err != nil {
+		log.Printf("[WARN:VERIFY] failed to fetch release %s: %v", release.url, err)
+		return
+	}
+
+	releaseBase := strings.TrimSuffix(release.url, "InRelease")
+	packagesRootPath, err := resolvePackagesRootPath(releaseBase)
+	if err != nil {
+		log.Printf("[WARN:VERIFY] failed to parse base URL %s: %v", releaseBase, err)
+		return
+	}
+
+	for _, sum := range sums {
+		if !isPackagesIndexFile(sum.file) {
+			continue
+		}
+
+		packagesURL := releaseBase + sum.file
+		packages, err := fetchPackagesIndex(c.client, packagesURL)
+		if err != nil {
+			log.Printf("[WARN:VERIFY] failed to fetch packages %s: %v", packagesURL, err)
+			continue
+		}
+
+		for packagePath, packageHash := range packages {
+			checksums[release.domain+packagesRootPath+packagePath] = packageHash
+		}
+	}
+}
+
+func resolvePackagesRootPath(releaseBase string) (string, error) {
+	baseURL, err := url.Parse(releaseBase + "../../")
+	if err != nil {
+		return "", err
+	}
+
+	// Normalize `../../` segments so package paths match cached deb paths.
+	resolvedBaseURL := baseURL.ResolveReference(&url.URL{Path: baseURL.Path})
+	return resolvedBaseURL.Path, nil
+}
+
+func isPackagesIndexFile(file string) bool {
+	return strings.HasSuffix(file, "Packages") ||
+		strings.HasSuffix(file, "Packages.gz") ||
+		strings.HasSuffix(file, "Packages.xz") ||
+		strings.HasSuffix(file, "Packages.bz2")
+}
+
+func (c *FSCache) verifyDebEntries(records []verificationRecord, packageChecksums map[string]string) {
+	for _, record := range records {
+		if !strings.HasSuffix(record.path, ".deb") {
+			continue
+		}
+		c.verifyDebEntry(record, packageChecksums)
+	}
+}
+
+func (c *FSCache) verifyDebEntry(record verificationRecord, packageChecksums map[string]string) {
+	expectedChecksum, found := packageChecksums[record.domain+record.path]
+	if !found {
+		log.Printf("[INFO:VERIFY] %s%s not found in packages index, marking for deletion", record.domain, record.path)
+		c.MarkForDeletion(record.protocol, record.domain, record.path)
+		return
+	}
+
+	localPath := c.buildLocalPath(record.entry.URL)
+	actualChecksum, err := sha256File(localPath)
+	if err != nil {
+		return
+	}
+
+	if actualChecksum == expectedChecksum {
+		return
+	}
+
+	log.Printf(
+		"[INFO:VERIFY] %s%s checksum mismatch: expected %s, got %s, marking for deletion",
+		record.domain,
+		record.path,
+		expectedChecksum,
+		actualChecksum,
+	)
+	c.MarkForDeletion(record.protocol, record.domain, record.path)
 }
 
 func sha256File(p string) (string, error) {
