@@ -407,6 +407,55 @@ func TestGenerateProxyCertificateAddsDomainIP(t *testing.T) {
 	}
 }
 
+func TestGenerateProxyCertificateNormalizesDomainHostPort(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "rsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	intercept.SetDomain("www.example.com:8443")
+
+	cert, err := intercept.generateProxyCertificate("www.example.com")
+	if err != nil {
+		t.Fatalf("generateProxyCertificate returned error: %v", err)
+	}
+
+	seen := 0
+	for _, dnsName := range cert.Leaf.DNSNames {
+		if dnsName == "www.example.com" {
+			seen++
+		}
+		if dnsName == "www.example.com:8443" {
+			t.Fatalf("expected host:port to be normalized before SAN insertion")
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("expected deduplicated DNS SAN for normalized host, got %d", seen)
+	}
+}
+
+func TestGenerateProxyCertificateNormalizesBracketedIPv6WithPort(t *testing.T) {
+	root := newTestCA(t, "rsa", nil)
+	intermediate := newTestCA(t, "ecdsa", root)
+	intercept, err := createIntercept(intermediate.cert, intermediate.key, root.cert)
+	if err != nil {
+		t.Fatalf("createIntercept returned error: %v", err)
+	}
+	intercept.SetDomain("[2001:db8::1]:8443")
+
+	cert, err := intercept.generateProxyCertificate("2001:db8::1")
+	if err != nil {
+		t.Fatalf("generateProxyCertificate returned error: %v", err)
+	}
+	if len(cert.Leaf.IPAddresses) != 1 {
+		t.Fatalf("expected one deduplicated IPv6 SAN, got %d", len(cert.Leaf.IPAddresses))
+	}
+	if got := cert.Leaf.IPAddresses[0].String(); got != "2001:db8::1" {
+		t.Fatalf("unexpected IPv6 SAN %q", got)
+	}
+}
+
 func TestCreateCertificateStoresAndResetsOperation(t *testing.T) {
 	root := newTestCA(t, "rsa", nil)
 	intermediate := newTestCA(t, "ecdsa", root)

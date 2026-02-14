@@ -283,20 +283,48 @@ func (c *Intercept) ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate
 
 // generateProxyCertificate generates a new certificate which is signed by an intermediate CA
 func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Certificate, error) {
+	template, err := c.newProxyCertificateTemplate(requestedHostname)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := genKeyPair()
+	if err != nil {
+		return nil, err
+	}
+
+	x, err := x509.CreateCertificate(rand.Reader, &template, c.publicKey, key.Public(), c.signingPrivateKey())
+	if err != nil {
+		return nil, err
+	}
+
+	return c.buildTLSCertificate(x, key)
+}
+
+func newCertificateSerialNumber() (*big.Int, error) {
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
 		log.Printf("Failed to generate serial number: %v", err)
 		return nil, err
 	}
+	return serialNumber, nil
+}
+
+func (c *Intercept) newProxyCertificateTemplate(requestedHostname string) (x509.Certificate, error) {
+	serialNumber, err := newCertificateSerialNumber()
+	if err != nil {
+		return x509.Certificate{}, err
+	}
+	now := time.Now()
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: requestedHostname,
 		},
-		NotBefore: time.Now().Add(-1 * time.Hour),
-		NotAfter:  time.Now().Add(24 * time.Hour),
+		NotBefore: now.Add(-1 * time.Hour),
+		NotAfter:  now.Add(24 * time.Hour),
 		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
@@ -312,61 +340,77 @@ func (c *Intercept) generateProxyCertificate(requestedHostname string) (*tls.Cer
 		template.CRLDistributionPoints = []string{c.crlAddress}
 	}
 
-	// Add SANs: requestedHostname (IP or DNS)
-	if ip := net.ParseIP(requestedHostname); ip != nil {
-		template.IPAddresses = append(template.IPAddresses, ip)
-	} else {
-		template.DNSNames = append(template.DNSNames, requestedHostname)
-	}
+	// Requested host and configured fallback domain are both valid SAN candidates.
+	addSANEntry(&template, requestedHostname)
+	addSANEntry(&template, normalizeSANHost(c.domain))
 
-	// Add c.domain to SANs, if gesetzt und noch nicht enthalten
-	if c.domain != "" {
-		domain := c.domain
-		if strings.Contains(domain, ":") {
-			domain = strings.Split(domain, ":")[0]
-		}
-		if ip := net.ParseIP(domain); ip != nil {
-			found := false
-			for _, existing := range template.IPAddresses {
-				if existing.Equal(ip) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				template.IPAddresses = append(template.IPAddresses, ip)
-			}
-		} else {
-			if !slices.Contains(template.DNSNames, domain) {
-				template.DNSNames = append(template.DNSNames, domain)
-			}
+	return template, nil
+}
+
+func addSANEntry(template *x509.Certificate, host string) {
+	if host == "" {
+		return
+	}
+	// Route SAN insertion by host type so DNS/IP entries stay type-correct.
+	if ip := net.ParseIP(host); ip != nil {
+		appendUniqueIP(template, ip)
+		return
+	}
+	appendUniqueDNS(template, host)
+}
+
+func appendUniqueIP(template *x509.Certificate, ip net.IP) {
+	// net.IP requires semantic equality checks (not byte-slice pointer equality).
+	for _, existing := range template.IPAddresses {
+		if existing.Equal(ip) {
+			return
 		}
 	}
+	template.IPAddresses = append(template.IPAddresses, ip)
+}
 
-	key, err := genKeyPair()
-	if err != nil {
-		return nil, err
+func appendUniqueDNS(template *x509.Certificate, dnsName string) {
+	if !slices.Contains(template.DNSNames, dnsName) {
+		template.DNSNames = append(template.DNSNames, dnsName)
+	}
+}
+
+func normalizeSANHost(host string) string {
+	if host == "" {
+		return ""
 	}
 
-	var privKey any
+	trimmedHost := strings.TrimSpace(host)
+	if parsedHost, _, err := net.SplitHostPort(trimmedHost); err == nil {
+		trimmedHost = parsedHost
+	}
+
+	// x509 SAN entries require the raw host value without bracket notation.
+	trimmedHost = strings.TrimPrefix(trimmedHost, "[")
+	trimmedHost = strings.TrimSuffix(trimmedHost, "]")
+
+	return trimmedHost
+}
+
+func (c *Intercept) signingPrivateKey() any {
 	if c.privateKeyEC != nil {
-		privKey = c.privateKeyEC
-	} else {
-		privKey = c.privateKey
+		return c.privateKeyEC
 	}
+	return c.privateKey
+}
 
-	x, err := x509.CreateCertificate(rand.Reader, &template, c.publicKey, key.Public(), privKey)
-	if err != nil {
-		return nil, err
-	}
-
+func (c *Intercept) buildTLSCertificate(leafCertDER []byte, key *ecdsa.PrivateKey) (*tls.Certificate, error) {
 	cert := &tls.Certificate{
-		Certificate: [][]byte{x},
+		Certificate: [][]byte{leafCertDER},
 		PrivateKey:  key,
 	}
-	cert.Leaf, _ = x509.ParseCertificate(x)
+	leaf, err := x509.ParseCertificate(leafCertDER)
+	if err != nil {
+		return nil, err
+	}
+	cert.Leaf = leaf
 
-	// add intermediate certificate to chain
+	// Keep the leaf+intermediate(+optional root) order expected by TLS clients.
 	cert.Certificate = append(cert.Certificate, c.publicKey.Raw)
 	cert.Leaf.Issuer = c.publicKey.Subject
 
