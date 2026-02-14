@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"log"
@@ -433,7 +434,7 @@ func (c *Intercept) GenerateCRL(crlAddress, path string) error {
 	revoked := []pkix.RevokedCertificate{}
 
 	now := time.Now()
-	nextUpdate := now.AddDate(0, 0, 8)
+	nextUpdate := now.AddDate(0, 0, 15) // Next update in 15 days
 
 	var priv crypto.Signer
 	if c.privateKeyEC != nil {
@@ -442,13 +443,30 @@ func (c *Intercept) GenerateCRL(crlAddress, path string) error {
 		priv = c.privateKey
 	}
 
+	var idpExt pkix.Extension
+	if crlAddress != "" {
+		var err error
+		idpExt, err = issuingDistributionPointExtension(
+			crlAddress,
+			true,  // onlyContainsUserCerts
+			false, // onlyContainsCACerts
+			false, // indirectCRL
+		)
+		if err != nil {
+			return err
+		}
+	}
+
 	crlBytes, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
 		SignatureAlgorithm:  0,
 		Issuer:              c.publicKey.Subject,
-		ThisUpdate:          now,
-		NextUpdate:          nextUpdate,
+		ThisUpdate:          now.UTC(),
+		NextUpdate:          nextUpdate.UTC(),
 		RevokedCertificates: revoked,
 		Number:              big.NewInt(now.Unix()),
+		ExtraExtensions: []pkix.Extension{
+			idpExt,
+		},
 	}, c.publicKey, priv)
 	if err != nil {
 		return err
@@ -466,4 +484,78 @@ func (c *Intercept) GenerateCRL(crlAddress, path string) error {
 	}
 
 	return nil
+}
+
+func derLen(n int) []byte {
+	if n < 0x80 {
+		return []byte{byte(n)}
+	}
+	// long form
+	tmp := make([]byte, 0, 4)
+	for x := n; x > 0; x >>= 8 {
+		tmp = append([]byte{byte(x & 0xff)}, tmp...)
+	}
+	return append([]byte{0x80 | byte(len(tmp))}, tmp...)
+}
+
+func derTLV(tag byte, content []byte) []byte {
+	out := make([]byte, 0, 1+5+len(content))
+	out = append(out, tag)
+	out = append(out, derLen(len(content))...)
+	out = append(out, content...)
+	return out
+}
+
+// buildIssuingDistributionPoint builds OID 2.5.29.28 value
+func buildIssuingDistributionPoint(uri string, onlyUser, onlyCA, indirect bool) ([]byte, error) {
+	if onlyUser && onlyCA {
+		return nil, errors.New("onlyUser and onlyCA cannot both be true")
+	}
+	// URI in GeneralName is IA5String -> ASCII
+	for i := 0; i < len(uri); i++ {
+		if uri[i] > 0x7f {
+			return nil, errors.New("uri must be ASCII (IA5String)")
+		}
+	}
+
+	// GeneralName uniformResourceIdentifier [6] IA5String
+	gnURI := derTLV(0x86, []byte(uri))
+
+	// DistributionPointName CHOICE fullName [0] GeneralNames
+	// fullName [0] wrapping the GeneralName list/content
+	fullName := derTLV(0xA0, gnURI)
+
+	// IssuingDistributionPoint.distributionPoint [0] DistributionPointName
+	dp := derTLV(0xA0, fullName)
+
+	body := make([]byte, 0, len(dp)+9)
+	body = append(body, dp...)
+
+	// [1] onlyContainsUserCerts BOOLEAN TRUE
+	if onlyUser {
+		body = append(body, 0x81, 0x01, 0xFF)
+	}
+	// [2] onlyContainsCACerts BOOLEAN TRUE
+	if onlyCA {
+		body = append(body, 0x82, 0x01, 0xFF)
+	}
+	// [4] indirectCRL BOOLEAN TRUE
+	if indirect {
+		body = append(body, 0x84, 0x01, 0xFF)
+	}
+
+	// SEQUENCE
+	return derTLV(0x30, body), nil
+}
+
+func issuingDistributionPointExtension(uri string, onlyUser, onlyCA, indirect bool) (pkix.Extension, error) {
+	val, err := buildIssuingDistributionPoint(uri, onlyUser, onlyCA, indirect)
+	if err != nil {
+		return pkix.Extension{}, err
+	}
+	return pkix.Extension{
+		Id:       asn1.ObjectIdentifier{2, 5, 29, 28}, // issuingDistributionPoint
+		Critical: true,
+		Value:    val,
+	}, nil
 }

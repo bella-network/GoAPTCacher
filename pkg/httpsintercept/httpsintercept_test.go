@@ -588,7 +588,7 @@ func TestGenerateCRLWritesParsableFile(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatalf("expected CRL data to be written")
 	}
-	if _, err := x509.ParseDERCRL(data); err != nil {
+	if _, err := x509.ParseRevocationList(data); err != nil {
 		t.Fatalf("generated CRL is not parsable: %v", err)
 	}
 }
