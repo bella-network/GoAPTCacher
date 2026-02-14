@@ -151,169 +151,35 @@ func (c *FSCache) cacheRefresh(localFile *url.URL, lastAccess AccessEntry) {
 // file has not changed. An error is returned if an error occurred during the
 // download.
 func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAccess AccessEntry) (bool, error) {
-	// Perform a GET request to the server to check if the file has changed. If
-	// possible, use the ETag or Last-Modified header. If the file has changed,
-	// download the new file. A unchanged file should be signaled by the server
-	// using a 304 Not Modified HTTP response.
-	req, err := http.NewRequest("GET", lastAccess.URL.String(), nil)
+	// Build a conditional GET so unchanged files can be detected cheaply by the origin.
+	req, err := buildRefreshRequest(lastAccess)
 	if err != nil {
 		return false, err
 	}
 
-	// Add header to identify the client
-	req.Header.Set("User-Agent", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
-	req.Header.Set("X-ACTION", "refresh")
-
-	// If ETag is available, add it to the request
-	if lastAccess.ETag != "" {
-		req.Header.Set("If-None-Match", lastAccess.ETag)
-	}
-
-	// If Last-Modified is available, add it to the request
-	if !lastAccess.RemoteLastModified.IsZero() {
-		req.Header.Set("If-Modified-Since", lastAccess.RemoteLastModified.UTC().Format(http.TimeFormat))
-	}
-
-	// This is specific to the GoAptCacher implementation, we add the SHA256 hash as header to the request
-	if lastAccess.SHA256 != "" {
-		req.Header.Set("X-SHA256", lastAccess.SHA256)
-	}
-
-	// Perform the request
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
 
-	// Determine protocol from the URL scheme
+	// Use cached URL protocol to address the same entry that triggered this refresh.
 	protocol := DetermineProtocolFromURL(lastAccess.URL)
 
-	// First check if the HTTP status code is 304 Not Modified, if so update
-	// only the last checked time.
-	if resp.StatusCode == http.StatusNotModified {
-		// Update the last checked time
-		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
-		log.Printf("[INFO:REFRESH:304] %s%s has not changed\n", localFile.Host, localFile.Path)
+	if c.handleRefreshStatus(resp.StatusCode, protocol, localFile) {
 		return false, nil
 	}
 
-	// If status code is 404 Not Found, mark the file for deletion.
-	if resp.StatusCode == http.StatusNotFound {
-		// Mark the file for deletion
-		c.MarkForDeletion(protocol, localFile.Host, localFile.Path)
-		log.Printf("[INFO:REFRESH:404] %s%s not found, marked for deletion\n", localFile.Host, localFile.Path)
+	lastModified, etag, unchanged := c.evaluateNotModified(resp, localFile, protocol, lastAccess)
+	if unchanged {
 		return false, nil
 	}
 
-	// If the status code is not 200 OK, log warning and return
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[WARN:REFRESH:CODE] %s%s returned status code %d\n", localFile.Host, localFile.Path, resp.StatusCode)
-		return false, nil
-	}
-
-	// Check if the file has changed. For this, we compare the Last-Modified
-	// header and the ETag header with the last known values. If Last-Modified
-	// is older than the locally stored file, we assume the file has not
-	// changed.
-	lastModified := lastAccess.RemoteLastModified
-	if lastmod := resp.Header.Get("Last-Modified"); lastmod != "" {
-		parsedLastModified, parseErr := time.Parse(http.TimeFormat, lastmod)
-		if parseErr != nil {
-			log.Printf("[WARN:REFRESH:LAST-MODIFIED] %s%s invalid Last-Modified header %q: %v\n", localFile.Host, localFile.Path, lastmod, parseErr)
-		} else {
-			lastModified = parsedLastModified
-			if !lastAccess.RemoteLastModified.IsZero() && lastModified.Before(lastAccess.RemoteLastModified) {
-				// Update the last checked time
-				c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
-				log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
-				return false, nil
-			}
-		}
-	}
-
-	// Check if the ETag has changed
-	etag := resp.Header.Get("ETag")
-	if etag != "" && etag == lastAccess.ETag {
-		// Update the last checked time
-		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
-		log.Printf("[INFO:REFRESH:NOTMODIFIED:ETAG] %s%s has not changed\n", localFile.Host, localFile.Path)
-		return false, nil
-	}
-
-	// At this point, we know that the file has changed. We need to download the
-	// new file and update the cache.
-	requiredSize := resp.ContentLength
-	if requiredSize > 0 {
-		if err := ensureDiskSpace(generatedName, requiredSize); err != nil {
-			log.Printf("[ERROR:REFRESH:DISK] %s %s\n", generatedName, err)
-			return false, err
-		}
-	}
-
-	// Generate a temporary filename to download the file to. This is
-	// necessary to avoid overwriting the old file while it is still being
-	// downloaded and to ensure that the file is only replaced once the download is
-	// complete.
-	tmpID, err := uuid.NewRandom()
+	// Download into a temporary file and replace atomically once complete.
+	wrb, newHash, err := downloadResponseToFile(resp, generatedName)
 	if err != nil {
-		log.Printf("[ERROR:REFRESH:RANDOM] %s\n", err)
 		return false, err
 	}
-
-	tempPath := generatedName + "-dl-" + tmpID.String()
-	cleanupTemp := true
-	defer func() {
-		if cleanupTemp {
-			_ = os.Remove(tempPath)
-		}
-	}()
-
-	// Create the file
-	file, err := os.Create(tempPath)
-	if err != nil {
-		log.Printf("[ERROR:REFRESH:CREATE] %s\n", err)
-		return false, err
-	}
-
-	if err := preallocateFile(file, requiredSize); err != nil {
-		log.Printf("[ERROR:REFRESH:PREALLOCATE] %s\n", err)
-		file.Close()
-		return false, err
-	}
-
-	// Write the file
-	wrb, err := io.Copy(file, resp.Body)
-	if err != nil {
-		log.Printf("[ERROR:REFRESH:WRITE] %s\n", err)
-		file.Close()
-
-		return false, err
-	}
-
-	if err := file.Close(); err != nil {
-		log.Printf("[ERROR:REFRESH:CLOSE] %s\n", err)
-		return false, err
-	}
-
-	if resp.ContentLength > 0 && resp.ContentLength != wrb {
-		err := fmt.Errorf("downloaded size mismatch: expected %d bytes, got %d", resp.ContentLength, wrb)
-		log.Printf("[ERROR:REFRESH:LENGTH] %s\n", err)
-		return false, err
-	}
-
-	newHash, err := GenerateSHA256Hash(tempPath)
-	if err != nil {
-		log.Printf("[ERROR:REFRESH:HASH] %s\n", err)
-		return false, err
-	}
-
-	// Rename the file and overwrite the old file
-	if err := os.Rename(tempPath, generatedName); err != nil {
-		log.Printf("[ERROR:REFRESH:RENAME] %s\n", err)
-		return false, err
-	}
-	cleanupTemp = false
 
 	// Update the access cache with the new file
 	c.UpdateFile(protocol, localFile.Host, localFile.Path, lastAccess.URL.String(), lastModified, etag, wrb)
@@ -325,4 +191,164 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 
 	return true, nil
+}
+
+// buildRefreshRequest creates the conditional GET request used for cache refreshes.
+func buildRefreshRequest(lastAccess AccessEntry) (*http.Request, error) {
+	req, err := http.NewRequest(http.MethodGet, lastAccess.URL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version))
+	req.Header.Set("X-ACTION", "refresh")
+
+	if lastAccess.ETag != "" {
+		req.Header.Set("If-None-Match", lastAccess.ETag)
+	}
+	if !lastAccess.RemoteLastModified.IsZero() {
+		req.Header.Set("If-Modified-Since", lastAccess.RemoteLastModified.UTC().Format(http.TimeFormat))
+	}
+	// X-SHA256 is a GoAptCacher specific validator used by some origins.
+	if lastAccess.SHA256 != "" {
+		req.Header.Set("X-SHA256", lastAccess.SHA256)
+	}
+
+	return req, nil
+}
+
+// handleRefreshStatus handles status codes that do not require a download.
+func (c *FSCache) handleRefreshStatus(statusCode, protocol int, localFile *url.URL) bool {
+	switch statusCode {
+	case http.StatusOK:
+		return false
+	case http.StatusNotModified:
+		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+		log.Printf("[INFO:REFRESH:304] %s%s has not changed\n", localFile.Host, localFile.Path)
+	case http.StatusNotFound:
+		c.MarkForDeletion(protocol, localFile.Host, localFile.Path)
+		log.Printf("[INFO:REFRESH:404] %s%s not found, marked for deletion\n", localFile.Host, localFile.Path)
+	default:
+		log.Printf("[WARN:REFRESH:CODE] %s%s returned status code %d\n", localFile.Host, localFile.Path, statusCode)
+	}
+
+	return true
+}
+
+// evaluateNotModified evaluates validators and returns true if content is unchanged.
+func (c *FSCache) evaluateNotModified(resp *http.Response, localFile *url.URL, protocol int, lastAccess AccessEntry) (time.Time, string, bool) {
+	lastModified, unchangedByDate := c.resolveRemoteLastModified(resp.Header.Get("Last-Modified"), localFile, protocol, lastAccess)
+	if unchangedByDate {
+		return lastModified, "", true
+	}
+
+	etag := resp.Header.Get("ETag")
+	if c.isUnchangedByETag(etag, protocol, localFile, lastAccess.ETag) {
+		return lastModified, etag, true
+	}
+
+	return lastModified, etag, false
+}
+
+// resolveRemoteLastModified parses Last-Modified and compares it with known metadata.
+func (c *FSCache) resolveRemoteLastModified(lastmod string, localFile *url.URL, protocol int, lastAccess AccessEntry) (time.Time, bool) {
+	lastModified := lastAccess.RemoteLastModified
+	if lastmod == "" {
+		return lastModified, false
+	}
+
+	parsedLastModified, parseErr := time.Parse(http.TimeFormat, lastmod)
+	if parseErr != nil {
+		log.Printf("[WARN:REFRESH:LAST-MODIFIED] %s%s invalid Last-Modified header %q: %v\n", localFile.Host, localFile.Path, lastmod, parseErr)
+		return lastModified, false
+	}
+
+	lastModified = parsedLastModified
+	if !lastAccess.RemoteLastModified.IsZero() && lastModified.Before(lastAccess.RemoteLastModified) {
+		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+		log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
+		return lastModified, true
+	}
+
+	return lastModified, false
+}
+
+// isUnchangedByETag returns true if the origin reports the same entity tag.
+func (c *FSCache) isUnchangedByETag(etag string, protocol int, localFile *url.URL, previousETag string) bool {
+	if etag == "" || etag != previousETag {
+		return false
+	}
+
+	c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+	log.Printf("[INFO:REFRESH:NOTMODIFIED:ETAG] %s%s has not changed\n", localFile.Host, localFile.Path)
+	return true
+}
+
+// downloadResponseToFile stores the response body in a temp file and atomically swaps it in.
+func downloadResponseToFile(resp *http.Response, generatedName string) (int64, string, error) {
+	requiredSize := resp.ContentLength
+	if requiredSize > 0 {
+		if err := ensureDiskSpace(generatedName, requiredSize); err != nil {
+			log.Printf("[ERROR:REFRESH:DISK] %s %s\n", generatedName, err)
+			return 0, "", err
+		}
+	}
+
+	tmpID, err := uuid.NewRandom()
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:RANDOM] %s\n", err)
+		return 0, "", err
+	}
+
+	tempPath := generatedName + "-dl-" + tmpID.String()
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	file, err := os.Create(tempPath)
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:CREATE] %s\n", err)
+		return 0, "", err
+	}
+
+	if err := preallocateFile(file, requiredSize); err != nil {
+		log.Printf("[ERROR:REFRESH:PREALLOCATE] %s\n", err)
+		file.Close()
+		return 0, "", err
+	}
+
+	wrb, err := io.Copy(file, resp.Body)
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:WRITE] %s\n", err)
+		file.Close()
+		return 0, "", err
+	}
+
+	if err := file.Close(); err != nil {
+		log.Printf("[ERROR:REFRESH:CLOSE] %s\n", err)
+		return 0, "", err
+	}
+
+	if resp.ContentLength > 0 && resp.ContentLength != wrb {
+		err := fmt.Errorf("downloaded size mismatch: expected %d bytes, got %d", resp.ContentLength, wrb)
+		log.Printf("[ERROR:REFRESH:LENGTH] %s\n", err)
+		return 0, "", err
+	}
+
+	newHash, err := GenerateSHA256Hash(tempPath)
+	if err != nil {
+		log.Printf("[ERROR:REFRESH:HASH] %s\n", err)
+		return 0, "", err
+	}
+
+	if err := os.Rename(tempPath, generatedName); err != nil {
+		log.Printf("[ERROR:REFRESH:RENAME] %s\n", err)
+		return 0, "", err
+	}
+	cleanupTemp = false
+
+	return wrb, newHash, nil
 }

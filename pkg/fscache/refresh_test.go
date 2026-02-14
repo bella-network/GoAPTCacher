@@ -125,3 +125,116 @@ func TestRefreshFileStoresLastModifiedWithoutPreviousRemoteTime(t *testing.T) {
 		t.Fatalf("unexpected refreshed file contents: got %q want %q", string(data), responseBody)
 	}
 }
+
+func TestRefreshFileNotModifiedUpdatesLastChecked(t *testing.T) {
+	cache := newTestFSCache(t)
+	cache.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusNotModified,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    r,
+			}, nil
+		}),
+	}
+
+	localFile := mustParseURL(t, "https://mirror.example/debian/dists/stable/Release")
+	generatedName := cache.buildLocalPath(localFile)
+	oldChecked := time.Now().Add(-2 * time.Hour)
+	previousEntry := AccessEntry{
+		LastAccessed: time.Now().Add(-4 * time.Hour),
+		LastChecked:  oldChecked,
+		URL:          localFile,
+	}
+
+	protocol := DetermineProtocolFromURL(localFile)
+	if err := cache.Set(protocol, localFile.Host, localFile.Path, previousEntry); err != nil {
+		t.Fatalf("failed to seed access cache entry: %v", err)
+	}
+
+	refreshed, err := cache.refreshFile(generatedName, localFile, previousEntry)
+	if err != nil {
+		t.Fatalf("refreshFile returned error: %v", err)
+	}
+	if refreshed {
+		t.Fatalf("expected no refresh for 304 responses")
+	}
+
+	gotEntry, ok := cache.Get(protocol, localFile.Host, localFile.Path)
+	if !ok {
+		t.Fatalf("expected access entry to exist")
+	}
+	if !gotEntry.LastChecked.After(oldChecked) {
+		t.Fatalf("expected LastChecked to be updated, got %v (old %v)", gotEntry.LastChecked, oldChecked)
+	}
+}
+
+func TestRefreshFileSkipsDownloadWhenETagIsUnchanged(t *testing.T) {
+	const (
+		oldContent = "existing cached content"
+		sameETag   = "\"same-etag\""
+	)
+
+	cache := newTestFSCache(t)
+	cache.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			headers := http.Header{}
+			headers.Set("ETag", sameETag)
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        headers,
+				Body:          io.NopCloser(strings.NewReader("new content should not be used")),
+				ContentLength: int64(len("new content should not be used")),
+				Request:       r,
+			}, nil
+		}),
+	}
+
+	localFile := mustParseURL(t, "http://mirror.example/debian/dists/stable/InRelease")
+	generatedName := cache.buildLocalPath(localFile)
+	if err := os.MkdirAll(filepath.Dir(generatedName), 0o755); err != nil {
+		t.Fatalf("failed to create cache directory: %v", err)
+	}
+	if err := os.WriteFile(generatedName, []byte(oldContent), 0o644); err != nil {
+		t.Fatalf("failed to write old cache file: %v", err)
+	}
+
+	oldChecked := time.Now().Add(-90 * time.Minute)
+	previousEntry := AccessEntry{
+		LastAccessed: time.Now().Add(-2 * time.Hour),
+		LastChecked:  oldChecked,
+		ETag:         sameETag,
+		URL:          localFile,
+		Size:         int64(len(oldContent)),
+	}
+
+	protocol := DetermineProtocolFromURL(localFile)
+	if err := cache.Set(protocol, localFile.Host, localFile.Path, previousEntry); err != nil {
+		t.Fatalf("failed to seed access cache entry: %v", err)
+	}
+
+	refreshed, err := cache.refreshFile(generatedName, localFile, previousEntry)
+	if err != nil {
+		t.Fatalf("refreshFile returned error: %v", err)
+	}
+	if refreshed {
+		t.Fatalf("expected no refresh when ETag is unchanged")
+	}
+
+	gotEntry, ok := cache.Get(protocol, localFile.Host, localFile.Path)
+	if !ok {
+		t.Fatalf("expected access entry to exist")
+	}
+	if !gotEntry.LastChecked.After(oldChecked) {
+		t.Fatalf("expected LastChecked to be updated, got %v (old %v)", gotEntry.LastChecked, oldChecked)
+	}
+
+	data, err := os.ReadFile(generatedName)
+	if err != nil {
+		t.Fatalf("failed reading cache file: %v", err)
+	}
+	if string(data) != oldContent {
+		t.Fatalf("expected cache file to stay unchanged, got %q", string(data))
+	}
+}

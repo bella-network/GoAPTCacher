@@ -86,7 +86,7 @@ func parsePublicKey(newPublicKey []byte) (*x509.Certificate, error) {
 }
 
 // parsePrivateKey parses the provided private key and returns an interface{}
-func parsePrivateKey(newPrivateKey []byte, password string) (interface{}, error) {
+func parsePrivateKey(newPrivateKey []byte, password string) (any, error) {
 	// Decode the private key from PEM format
 	privPem, _ := pem.Decode(newPrivateKey)
 	if privPem == nil {
@@ -136,7 +136,7 @@ func parseRootCA(newRootCAPublicKey []byte) (*x509.Certificate, error) {
 
 // createIntercept creates a new Intercept object with the provided public key,
 // private key, and root CA public key
-func createIntercept(parsedPublicKey *x509.Certificate, privateKey interface{}, rootCA *x509.Certificate) (*Intercept, error) {
+func createIntercept(parsedPublicKey *x509.Certificate, privateKey any, rootCA *x509.Certificate) (*Intercept, error) {
 	intercept := &Intercept{
 		publicKey: parsedPublicKey,
 		rootCA:    rootCA,
