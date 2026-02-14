@@ -84,6 +84,7 @@ sonarqube-check:
     when: always
   dependencies:
     - test
+    - lint
   script:
     - sonar-scanner
   allow_failure: true

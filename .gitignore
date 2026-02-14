@@ -11,4 +11,4 @@
 
 # Debug Builds
 __debug_bin**
-goaptcacher
+/goaptcacher
