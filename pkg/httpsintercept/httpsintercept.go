@@ -51,6 +51,7 @@ type IssuedCertificate struct {
 var (
 	ErrInvalidPublicKey  = errors.New("invalid public key")
 	ErrInvalidPrivateKey = errors.New("invalid private key")
+	ErrRootCANotProvided = errors.New("root ca not provided")
 )
 
 // New creates a new Intercept object with the provided public key, private key,
@@ -69,8 +70,11 @@ func New(newPublicKey, newPrivateKey []byte, password string, newRootCAPublicKey
 	}
 
 	rootCA, err := parseRootCA(newRootCAPublicKey)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrRootCANotProvided) {
 		return nil, err
+	}
+	if errors.Is(err, ErrRootCANotProvided) {
+		rootCA = nil
 	}
 
 	return createIntercept(parsedPublicKey, privateKey, rootCA)
@@ -95,10 +99,10 @@ func parsePrivateKey(newPrivateKey []byte, password string) (any, error) {
 	}
 
 	// Decrypt the private key if it is encrypted
-	if x509.IsEncryptedPEMBlock(privPem) {
+	if x509.IsEncryptedPEMBlock(privPem) { //nolint:staticcheck // needed for legacy encrypted PEM key support
 		if privPem.Type == "ENCRYPTED PRIVATE KEY" || privPem.Type == "EC PRIVATE KEY" {
 			var err error
-			if privPem.Bytes, err = x509.DecryptPEMBlock(privPem, []byte(password)); err != nil {
+			if privPem.Bytes, err = x509.DecryptPEMBlock(privPem, []byte(password)); err != nil { //nolint:staticcheck // needed for legacy encrypted PEM key support
 				return nil, err
 			}
 		} else {
@@ -123,8 +127,8 @@ func parsePrivateKey(newPrivateKey []byte, password string) (any, error) {
 
 // parseRootCA parses the provided root CA public key and returns an x509.Certificate
 func parseRootCA(newRootCAPublicKey []byte) (*x509.Certificate, error) {
-	if newRootCAPublicKey == nil {
-		return nil, nil
+	if len(newRootCAPublicKey) == 0 {
+		return nil, ErrRootCANotProvided
 	}
 
 	rootPem, _ := pem.Decode(newRootCAPublicKey)

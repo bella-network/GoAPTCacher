@@ -126,7 +126,7 @@ func encryptedPEMFromKey(t *testing.T, key crypto.Signer, password, blockType st
 	if err != nil {
 		t.Fatalf("failed to marshal pkcs8: %v", err)
 	}
-	block, err := x509.EncryptPEMBlock(rand.Reader, blockType, der, []byte(password), x509.PEMCipherAES256)
+	block, err := x509.EncryptPEMBlock(rand.Reader, blockType, der, []byte(password), x509.PEMCipherAES256) //nolint:staticcheck // test fixture for legacy encrypted PEM support
 	if err != nil {
 		t.Fatalf("failed to encrypt pem block: %v", err)
 	}
@@ -219,8 +219,8 @@ func TestParsePrivateKeyWrongPassword(t *testing.T) {
 
 func TestParseRootCANil(t *testing.T) {
 	cert, err := parseRootCA(nil)
-	if err != nil {
-		t.Fatalf("parseRootCA returned unexpected error: %v", err)
+	if !errors.Is(err, ErrRootCANotProvided) {
+		t.Fatalf("expected ErrRootCANotProvided, got %v", err)
 	}
 	if cert != nil {
 		t.Fatalf("expected nil certificate for nil input")

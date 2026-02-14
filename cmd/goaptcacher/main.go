@@ -13,7 +13,7 @@ import (
 )
 
 var config *Config                      // Config struct holding the configuration values
-var loadedDomains uint64                // Number of loaded domains
+var loadedDomains int                   // Number of loaded domains
 var cache *fscache.FSCache              // Cache object used to store cached files
 var intercept *httpsintercept.Intercept // Intercept object used to handle HTTPS interception
 
@@ -86,7 +86,7 @@ func main() {
 
 	// If no domains and passthrough domains are configured, log a warning that
 	// all requests will be allowed.
-	loadedDomains = uint64(len(config.Domains) + len(config.PassthroughDomains))
+	loadedDomains = len(config.Domains) + len(config.PassthroughDomains)
 	if loadedDomains == 0 {
 		log.Println("[WARN] No domains or passthrough domains are configured!")
 		log.Println("[WARN] All HTTP requests will be passed through - THIS IS A SECURITY RISK!")
@@ -176,7 +176,7 @@ func main() {
 	// Initiate cache
 	cache = fscache.NewFSCache(config.CacheDirectory)
 	// Start periodic verification of cached packages
-	//cache.StartSourcesVerification()
+	// cache.StartSourcesVerification()
 
 	// Set expiration days for the cache
 	if config.Expiration.UnusedDays > 0 {

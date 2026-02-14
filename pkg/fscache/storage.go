@@ -3,8 +3,10 @@ package fscache
 import (
 	"fmt"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,9 +32,26 @@ func ensureDiskSpace(path string, required int64) error {
 		return fmt.Errorf("statfs %s: %w", dir, err)
 	}
 
-	free := int64(stat.Bavail) * int64(stat.Bsize)
-	if free < required {
-		return fmt.Errorf("insufficient disk space: need %d bytes, available %d bytes", required, free)
+	if stat.Bsize <= 0 {
+		return fmt.Errorf("invalid block size: %d", stat.Bsize)
+	}
+
+	blockSize, err := strconv.ParseUint(strconv.FormatInt(stat.Bsize, 10), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid block size: %w", err)
+	}
+	requiredBytes, err := strconv.ParseUint(strconv.FormatInt(required, 10), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid required size: %w", err)
+	}
+
+	hi, freeBytes := bits.Mul64(stat.Bavail, blockSize)
+	if hi != 0 {
+		freeBytes = ^uint64(0)
+	}
+
+	if freeBytes < requiredBytes {
+		return fmt.Errorf("insufficient disk space: need %d bytes, available %d bytes", required, freeBytes)
 	}
 
 	return nil

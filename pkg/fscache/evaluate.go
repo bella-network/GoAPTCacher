@@ -186,7 +186,7 @@ func (c *FSCache) refreshFile(generatedName string, localFile *url.URL, lastAcce
 	if err := c.SetSHA256(protocol, localFile.Host, localFile.Path, newHash); err != nil {
 		log.Printf("[ERROR:REFRESH:SHA256] %s\n", err)
 	}
-	go c.TrackRequest(false, wrb)
+	c.trackRequestAsync(false, wrb)
 
 	log.Printf("[INFO:REFRESH:200] %s%s has changed, downloaded %d bytes\n", localFile.Host, localFile.Path, wrb)
 

@@ -127,9 +127,9 @@ func (c *FSCache) validateRequest(r *http.Request) error {
 	if r.URL.Host == "" {
 		if r.Host == "" {
 			return fmt.Errorf("invalid host")
-		} else {
-			r.URL.Host = r.Host
 		}
+
+		r.URL.Host = r.Host
 	}
 
 	// Check if the used HTTP Host is a valid domain
@@ -155,7 +155,7 @@ func (c *FSCache) ServeFromRequest(r *http.Request, w http.ResponseWriter) {
 		c.serveGETRequest(r, w)
 	case http.MethodHead:
 		c.serveHEADRequest(r, w)
-	//case http.MethodConnect:
+	// case http.MethodConnect:
 	// TODO: Implement CONNECT method
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

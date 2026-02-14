@@ -332,7 +332,10 @@ _apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 
 		<br>
 		Alternatively, you can also create an A or AAAA DNS record for <code><strong>apt-proxy</strong></code> or <code><strong>apt-proxy.example.com</strong></code> pointing to the IP address of this proxy server.<br>
 		<br>
-		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to <code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code> (based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP port 3142 to support this fallback.<br>
+		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to
+		<code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code>
+		(based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP
+		port 3142 to support this fallback.<br>
 		<br>
 		<strong>Important note:</strong> <code>auto-apt-proxy</code> only applies the proxy settings for HTTP connections. HTTPS connections will not use the proxy server unless you manually configure the HTTPS proxy as well (see above).
 	</p>
@@ -361,7 +364,10 @@ _http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN S
 	response += `<p>
 		If all your clients are <strong>centrally managed</strong>, trusting the proxy server's CA certificate and always connected to the proxy server use the "APT Proxy Directives" method.<br>
 		<br>
-		When using <strong>GitLab CI/CD runners</strong>, clients with <strong>Windows Subsystem for Linux</strong> or other <strong>ephemeral systems</strong>, using the "APT Proxy Discovery" and "DNS SRV Override" method is recommended to avoid issues with changing IP addresses, DNS names or moving between networks.
+		When using <strong>GitLab CI/CD runners</strong>, clients with
+		<strong>Windows Subsystem for Linux</strong> or other <strong>ephemeral systems</strong>,
+		using the "APT Proxy Discovery" and "DNS SRV Override" method is recommended to avoid
+		issues with changing IP addresses, DNS names or moving between networks.
 	</p>`
 
 	return response
@@ -442,7 +448,12 @@ func getStorageInfo() (total uint64, used uint64, err error) {
 		return 0, 0, err
 	}
 
-	total = stat.Blocks * uint64(stat.Bsize)
-	used = (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+	blockSize, err := strconv.ParseUint(strconv.FormatInt(stat.Bsize, 10), 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	total = stat.Blocks * blockSize
+	used = (stat.Blocks - stat.Bfree) * blockSize
 	return total, used, nil
 }

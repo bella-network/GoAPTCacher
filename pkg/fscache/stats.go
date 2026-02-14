@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -172,9 +173,7 @@ func (c *FSCache) dayStatsLocked(day string) *statsEntry {
 
 // TrackRequest updates request statistics for cache hits and misses.
 func (c *FSCache) TrackRequest(cacheHit bool, transferred int64) error {
-	if transferred < 0 {
-		transferred = 0
-	}
+	transferredBytes := nonNegativeInt64ToUint64(transferred)
 
 	c.statsMux.Lock()
 	day := time.Now().Format("2006-01-02")
@@ -182,11 +181,11 @@ func (c *FSCache) TrackRequest(cacheHit bool, transferred int64) error {
 	entry.Requests++
 	if cacheHit {
 		entry.Hits++
-		entry.TrafficUp += uint64(transferred)
+		entry.TrafficUp += transferredBytes
 	} else {
 		entry.Misses++
-		entry.TrafficDown += uint64(transferred)
-		entry.TrafficUp += uint64(transferred)
+		entry.TrafficDown += transferredBytes
+		entry.TrafficUp += transferredBytes
 	}
 	c.statsDirty = true
 	c.statsRevision++
@@ -197,23 +196,34 @@ func (c *FSCache) TrackRequest(cacheHit bool, transferred int64) error {
 
 // TrackTunnelRequest updates statistics for tunnel traffic.
 func (c *FSCache) TrackTunnelRequest(transferred int64) error {
-	if transferred < 0 {
-		transferred = 0
-	}
+	transferredBytes := nonNegativeInt64ToUint64(transferred)
 
 	c.statsMux.Lock()
 	day := time.Now().Format("2006-01-02")
 	entry := c.dayStatsLocked(day)
 	entry.Requests++
 	entry.Tunnel++
-	entry.TrafficDown += uint64(transferred)
-	entry.TrafficUp += uint64(transferred)
-	entry.TunnelTransfer += uint64(transferred)
+	entry.TrafficDown += transferredBytes
+	entry.TrafficUp += transferredBytes
+	entry.TunnelTransfer += transferredBytes
 	c.statsDirty = true
 	c.statsRevision++
 	c.statsMux.Unlock()
 
 	return nil
+}
+
+func nonNegativeInt64ToUint64(v int64) uint64 {
+	if v <= 0 {
+		return 0
+	}
+
+	u, err := strconv.ParseUint(strconv.FormatInt(v, 10), 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	return u
 }
 
 // GetStatsSnapshot returns aggregate and per-day statistics.
@@ -310,7 +320,7 @@ func (c *FSCache) GetCacheUsage() (uint64, uint64, error) {
 		}
 
 		filesCached++
-		totalSize += uint64(info.Size())
+		totalSize += nonNegativeInt64ToUint64(info.Size())
 	}
 
 	return filesCached, totalSize, nil

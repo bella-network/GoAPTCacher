@@ -31,6 +31,8 @@ linters:
       line-length: 250
     misspell:
       locale: US
+    cognitive-complexity:
+      max-complexity: 30
   exclusions:
     generated: lax
     presets:

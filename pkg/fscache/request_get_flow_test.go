@@ -333,7 +333,7 @@ func TestServeGETRequestCacheMissDownloadAndCache(t *testing.T) {
 }
 
 func TestServeGETRequestCacheMissUpstreamStatusError(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, "not found")
 	}))

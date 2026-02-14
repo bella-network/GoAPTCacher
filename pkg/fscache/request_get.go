@@ -114,7 +114,7 @@ func (c *FSCache) serveLocalFile(w http.ResponseWriter, r *http.Request, localPa
 
 	// Log the cache hit
 	log.Printf("[INFO:GET:HIT:%s] %s\n", r.RemoteAddr, r.URL.String())
-	go c.TrackRequest(true, info.Size())
+	c.trackRequestAsync(true, info.Size())
 }
 
 // backgroundFileTasks performs background tasks for a cached file, determines
@@ -136,8 +136,8 @@ func (c *FSCache) backgroundFileTasks(request *url.URL) {
 		go c.cacheRefresh(request, lastAccess)
 	}
 
-	go c.Hit(protocol, request.Host, request.Path)
-	go c.AddURLIfNotExists(protocol, request.Host, request.Path, request.String())
+	c.hitAsync(protocol, request.Host, request.Path)
+	c.addURLIfNotExistsAsync(protocol, request.Host, request.Path, request.String())
 }
 
 // serveGETRequestCacheMiss is the function to serve a GET request for a client if the cache was missed.
@@ -340,7 +340,7 @@ func (c *FSCache) streamCacheMissResponse(protocol int, r *http.Request, w http.
 	}
 
 	log.Printf("[INFO:DL:CREATED] %s%s - Wrote %d bytes\n", r.URL.Host, r.URL.Path, bw)
-	go c.TrackRequest(false, bw)
+	c.trackRequestAsync(false, bw)
 }
 
 func (c *FSCache) prepareCacheMissTarget(

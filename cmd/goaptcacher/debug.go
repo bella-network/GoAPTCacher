@@ -124,7 +124,7 @@ func writeDebugJSON(w http.ResponseWriter) {
 			"mspan_inuse":    mem.MSpanInuse,
 			"sys":            mem.Sys,
 			"num_gc":         mem.NumGC,
-			"last_gc_unix":   int64(mem.LastGC / uint64(time.Second)),
+			"last_gc_unix":   mem.LastGC / uint64(time.Second),
 			"pause_total_ns": mem.PauseTotalNs,
 		},
 	}

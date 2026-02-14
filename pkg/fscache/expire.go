@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,7 +51,12 @@ func (c *FSCache) GetUnusedFiles(days uint64) ([]url.URL, error) {
 		return nil, err
 	}
 
-	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	daysInt, err := strconv.Atoi(strconv.FormatUint(days, 10))
+	if err != nil {
+		daysInt = int(^uint(0) >> 1)
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -daysInt)
 	for _, record := range entries {
 		entry := c.normalizeAccessEntry(record.protocol, record.domain, record.path, record.entry)
 		if entry.LastAccessed.IsZero() {

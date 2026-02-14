@@ -119,7 +119,7 @@ expiration:
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 	return path
@@ -276,7 +276,7 @@ func TestCleanupOldProfilesRetainsNewest(t *testing.T) {
 	create := func(name string, modTime time.Time) {
 		t.Helper()
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
 			t.Fatalf("failed to create %s: %v", name, err)
 		}
 		if err := os.Chtimes(path, modTime, modTime); err != nil {
@@ -323,7 +323,7 @@ func TestHTTPServeCRL(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "crl.pem")
-		if err := os.WriteFile(path, []byte("test-crl"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte("test-crl"), 0o600); err != nil {
 			t.Fatalf("failed to write crl file: %v", err)
 		}
 
@@ -360,7 +360,7 @@ func TestHTTPServeCertificate(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		dir := t.TempDir()
 		certPath := filepath.Join(dir, "ca.crt")
-		if err := os.WriteFile(certPath, []byte("test-cert"), 0o644); err != nil {
+		if err := os.WriteFile(certPath, []byte("test-cert"), 0o600); err != nil {
 			t.Fatalf("failed to write cert file: %v", err)
 		}
 

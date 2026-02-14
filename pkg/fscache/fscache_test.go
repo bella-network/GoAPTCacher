@@ -115,7 +115,7 @@ func TestBuildLocalPathNormalizesEncodedTraversalAndBackslashes(t *testing.T) {
 
 func TestBuildLocalPathWithCustomFunc(t *testing.T) {
 	cache := newTestFSCache(t)
-	cache.CustomCachePath = func(u *url.URL) string {
+	cache.CustomCachePath = func(_ *url.URL) string {
 		return "custom-path"
 	}
 
