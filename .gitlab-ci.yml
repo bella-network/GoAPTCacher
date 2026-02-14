@@ -65,8 +65,6 @@ lint:
       - report.xml
     expire_in: 1 hour
   allow_failure: true
-  only:
-    - main
 
 sonarqube-check:
   stage: analysis
