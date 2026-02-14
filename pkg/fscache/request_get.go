@@ -152,96 +152,92 @@ func (c *FSCache) serveGETRequestCacheMissWithSleep(r *http.Request, w http.Resp
 
 	protocol := DetermineProtocolFromURL(r.URL)
 
-	// If retry count is too high, return an error to the client.
-	if retry > 25 {
-		log.Printf("[ERROR:GET:RETRY:%d] %s%s - Too many retries, giving up\n", retry, r.URL.Host, r.URL.Path)
-		http.Error(
-			w,
-			"File is currently being downloaded, please try again later",
-			http.StatusInternalServerError,
-		)
+	if c.retryLimitReached(r, w, retry) {
 		return
 	}
 
-	// File is requested to be direcrly downloaded. As parallel downloads are
-	// possible of the same file, block all other requests for the same file
-	// until the download is finished.
-	created := c.CreateExclusiveWriteLock(protocol, r.URL.Host, r.URL.Path)
-	if !created {
-		sleepFn(time.Second)
-		c.serveGETRequestCacheMissWithSleep(r, w, retry+1, sleepFn)
+	if !c.acquireWriteLockOrRetry(protocol, r, w, retry, sleepFn) {
 		return
 	}
 	defer c.DeleteWriteLock(protocol, r.URL.Host, r.URL.Path)
 
-	// File might be downloaded by another request, check again.
-	_, ok := c.Get(protocol, r.URL.Host, r.URL.Path)
-	if ok {
-		// Retry the request.
-		c.serveGETRequest(r, w)
+	if c.serveRecoveredCacheMiss(protocol, r, w) {
 		return
 	}
 
-	// Check if the file exists in the cache directory.
-	if fileInfo, err := os.Stat(c.buildLocalPath(r.URL)); err == nil {
-		// File exists, but is not in the access cache. This can happen if the
-		// cache was deleted or the file was added manually.
+	c.fetchAndServeCacheMiss(protocol, r, w)
+}
 
-		// Generate SHA256 hash of the file
-		hash, err := GenerateSHA256Hash(c.buildLocalPath(r.URL))
-		if err != nil {
-			log.Printf("Error generating SHA256 hash: %v\n", err)
-			http.Error(w, "Error generating file hash", http.StatusInternalServerError)
-			return
-		}
-
-		c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
-			RemoteLastModified: fileInfo.ModTime(),
-			LastAccessed:       time.Now(),
-			URL:                r.URL,
-			Size:               fileInfo.Size(),
-			SHA256:             hash,
-		})
-
-		// Set header that describes the cache hit
-		w.Header().Add("X-Cache", "ROUNDTRIP")
-
-		// Retry the request.
-		c.serveGETRequest(r, w)
-		return
+func (c *FSCache) retryLimitReached(r *http.Request, w http.ResponseWriter, retry uint64) bool {
+	if retry <= 25 {
+		return false
 	}
 
-	// Fetch the file from the original source
-	req, err := http.NewRequest("GET", r.URL.String(), nil)
+	log.Printf("[ERROR:GET:RETRY:%d] %s%s - Too many retries, giving up\n", retry, r.URL.Host, r.URL.Path)
+	http.Error(
+		w,
+		"File is currently being downloaded, please try again later",
+		http.StatusInternalServerError,
+	)
+	return true
+}
+
+func (c *FSCache) acquireWriteLockOrRetry(
+	protocol int,
+	r *http.Request,
+	w http.ResponseWriter,
+	retry uint64,
+	sleepFn func(time.Duration),
+) bool {
+	created := c.CreateExclusiveWriteLock(protocol, r.URL.Host, r.URL.Path)
+	if created {
+		return true
+	}
+
+	sleepFn(time.Second)
+	c.serveGETRequestCacheMissWithSleep(r, w, retry+1, sleepFn)
+	return false
+}
+
+func (c *FSCache) serveRecoveredCacheMiss(protocol int, r *http.Request, w http.ResponseWriter) bool {
+	if _, ok := c.Get(protocol, r.URL.Host, r.URL.Path); ok {
+		c.serveGETRequest(r, w)
+		return true
+	}
+
+	localPath := c.buildLocalPath(r.URL)
+	fileInfo, err := os.Stat(localPath)
+	if err != nil {
+		return false
+	}
+
+	hash, err := GenerateSHA256Hash(localPath)
+	if err != nil {
+		log.Printf("Error generating SHA256 hash: %v\n", err)
+		http.Error(w, "Error generating file hash", http.StatusInternalServerError)
+		return true
+	}
+
+	c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
+		RemoteLastModified: fileInfo.ModTime(),
+		LastAccessed:       time.Now(),
+		URL:                r.URL,
+		Size:               fileInfo.Size(),
+		SHA256:             hash,
+	})
+
+	w.Header().Add("X-Cache", "ROUNDTRIP")
+	c.serveGETRequest(r, w)
+	return true
+}
+
+func (c *FSCache) fetchAndServeCacheMiss(protocol int, r *http.Request, w http.ResponseWriter) {
+	req, err := c.newCacheMissUpstreamRequest(r)
 	if err != nil {
 		http.Error(w, "Error creating request", http.StatusInternalServerError)
 		return
 	}
 
-	// Copy headers from the original request to the new request
-	for key, values := range r.Header {
-		for _, value := range values {
-			// Skip E-Tag and If-Modified-Since headers as this would return a 304 Not Modified response
-			if key == "If-Modified-Since" || key == "If-None-Match" || key == "E-Tag" {
-				continue
-			}
-			// Skip hop-by-hop headers as these are handled by the proxy
-			if _, skip := hopByHopHeaders[http.CanonicalHeaderKey(key)]; skip {
-				continue
-			}
-
-			req.Header.Add(key, value)
-		}
-	}
-
-	// Add a header to indicate that the request is coming from the cache
-	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	req.Header.Set(
-		"X-Proxy-Server",
-		fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version),
-	)
-
-	// Send the request to the original source
 	resp, err := c.client.Do(req)
 	if err != nil {
 		http.Error(w, "Error fetching file", http.StatusInternalServerError)
@@ -250,159 +246,82 @@ func (c *FSCache) serveGETRequestCacheMissWithSleep(r *http.Request, w http.Resp
 	}
 	defer resp.Body.Close()
 
-	// Check if the response status code is OK
 	if resp.StatusCode != http.StatusOK {
 		http.Error(w, "Error fetching file", http.StatusNotFound)
 		log.Printf("[ERROR:GET:STATUS:%d] %s%s - Error fetching file: received status code %d\n", resp.StatusCode, r.URL.Host, r.URL.Path, resp.StatusCode)
 		return
 	}
 
-	targetPath := c.buildLocalPath(r.URL)
+	c.streamCacheMissResponse(protocol, r, w, resp)
+}
 
-	// Create the cache directory if it does not exist
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		log.Printf("Error creating cache directory: %v\n", err)
-		http.Error(w, "Error creating cache directory", http.StatusInternalServerError)
+func (c *FSCache) newCacheMissUpstreamRequest(r *http.Request) (*http.Request, error) {
+	req, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for key, values := range r.Header {
+		if skipRequestHeaderForCacheMiss(key) {
+			continue
+		}
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	req.Header.Set(
+		"X-Proxy-Server",
+		fmt.Sprintf("GoAptCacher/%s (+https://gitlab.com/bella.network/goaptcacher)", buildinfo.Version),
+	)
+	return req, nil
+}
+
+func skipRequestHeaderForCacheMiss(key string) bool {
+	if key == "If-Modified-Since" || key == "If-None-Match" || key == "E-Tag" {
+		return true
+	}
+
+	_, skip := hopByHopHeaders[http.CanonicalHeaderKey(key)]
+	return skip
+}
+
+func (c *FSCache) streamCacheMissResponse(protocol int, r *http.Request, w http.ResponseWriter, resp *http.Response) {
+	targetPath := c.buildLocalPath(r.URL)
+	requiredSize, ok := c.prepareCacheMissTarget(targetPath, r, w, resp)
+	if !ok {
 		return
 	}
 
-	// Ensure that there is enough disk space to store the file If
-	// Content-Length is not set, we cannot reserve space and just try to
-	// download the file. This might lead to a failed download if the disk is
-	// full.
-	requiredSize := resp.ContentLength
-	if requiredSize > 0 {
-		if err := ensureDiskSpace(targetPath, requiredSize); err != nil {
-			log.Printf("[ERROR:GET:DISK] Error reserving disk space for %s%s: %v\n", r.URL.Host, r.URL.Path, err)
-			http.Error(w, "Insufficient storage on cache server", http.StatusInsufficientStorage)
-			return
-		}
-	}
-
-	// Forward headers from the upstream response before streaming the body.
-	copyResponseHeaders(w.Header(), resp.Header)
-
-	// Set header that describes the cache hit
-	w.Header().Set("X-Cache", "MISS")
-
-	// Set Last-Modified header if available
-	if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
-		if parsed, err := time.Parse(time.RFC1123, lastModified); err == nil {
-			w.Header().Set("Last-Modified", parsed.UTC().Format(time.RFC1123))
-		} else {
-			log.Printf("Invalid Last-Modified header: %s (%v)", lastModified, err)
-		}
-	}
-
-	// Set ETag header if available
-	if eTag := resp.Header.Get("ETag"); eTag != "" {
-		w.Header().Set("ETag", eTag)
-	}
-
-	// Create a UUID for the file to prevent conflicts with other downloads
-	randomName := uuid.New().String()
-	tempPath := targetPath + "." + randomName + ".partial"
-	cleanupTemp := true
+	tempPath := buildTempCachePath(targetPath)
 	defer func() {
-		if cleanupTemp {
+		if tempPath != "" {
 			_ = os.Remove(tempPath)
 		}
 	}()
 
-	// Write the file to the cache asynchronously so the response to the
-	// client is not limited by disk throughput. A small buffer is used to
-	// prevent unbounded memory usage while still decoupling the disk write.
-	file, err := os.Create(tempPath)
-	if err != nil {
-		log.Printf("Error creating file: %v\n", err)
+	file, ok := c.createCacheMissTempFile(tempPath, requiredSize, w)
+	if !ok {
 		return
 	}
 
-	// Preallocate the file to the required size to prevent fragmentation and
-	// ensure that writes are atomic. This is only done if Content-Length is
-	// set.
-	if requiredSize > 0 {
-		if err := preallocateFile(file, requiredSize); err != nil {
-			log.Printf("Error preallocating file: %v\n", err)
-			file.Close()
-			http.Error(w, "Error reserving storage", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Write the response status now that headers are populated and storage is reserved.
-	w.WriteHeader(resp.StatusCode)
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-
-	defer func() {
-		if file != nil {
-			_ = file.Close()
-		}
-	}()
-
-	var clientWriter io.Writer = w
-	if flusher, ok := w.(http.Flusher); ok {
-		clientWriter = flushWriter{w: w, flusher: flusher}
-	}
-
-	hasher := sha256.New()
-	cacheDropper := newCacheDropWriter(file, cacheDropThreshold, cacheDropChunk)
-	multiWriter := io.MultiWriter(clientWriter, cacheDropper, hasher)
-	copyBuf := make([]byte, 32*1024)
-	reader := readerOnly{r: resp.Body}
-
-	// Stream data to the client and write to disk with a bounded buffer to
-	// avoid unbounded memory usage.
-	bw, err := io.CopyBuffer(multiWriter, reader, copyBuf)
-	if err != nil {
-		log.Printf("Error writing file: %v\n", err)
+	bw, hash, ok := streamResponseToClientAndCache(w, resp, file)
+	if !ok {
 		return
 	}
-	cacheDropper.DropCache()
-	if err := file.Close(); err != nil {
-		log.Printf("Error closing file: %v\n", err)
-		return
-	}
-	file = nil
 
-	// Check if the number of bytes written matches the Content-Length header
 	if resp.ContentLength > 0 && resp.ContentLength != bw {
 		log.Printf("Error writing file: expected %d bytes, got %d\n", resp.ContentLength, bw)
 		return
 	}
 
-	// Check if Last-Modified header is set and can be parsed as a time
-	lastModifiedTime := time.Now()
-	lastModified := resp.Header.Get("Last-Modified")
-	if lastModified != "" {
-		// Parse the Last-Modified header of Mon, 30 Sep 2024 22:10:24 GMT format
-		lastModifiedTime, err = time.Parse(time.RFC1123, lastModified)
-		if err != nil {
-			log.Printf("Error parsing Last-Modified header: %v\n", err)
-		}
-	}
-
-	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	// Rename the file to its final name
-	err = os.Rename(tempPath, targetPath)
-	if err != nil {
-		log.Printf("Error renaming file: %v\n", err)
-		http.Error(w, "Error renaming file", http.StatusInternalServerError)
+	lastModifiedTime := parseLastModifiedForMetadata(resp.Header.Get("Last-Modified"))
+	if !c.finalizeCacheMissFile(tempPath, targetPath, lastModifiedTime, w) {
 		return
 	}
-	cleanupTemp = false
+	tempPath = ""
 
-	// If last modified time is known, set it on the file
-	if !lastModifiedTime.IsZero() && lastModifiedTime.Year() > 2000 {
-		if err := os.Chtimes(targetPath, time.Now(), lastModifiedTime); err != nil {
-			log.Printf("Error setting file times: %v\n", err)
-		}
-	}
-
-	// Update the access cache with the new file
 	if err := c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
 		RemoteLastModified: lastModifiedTime,
 		LastAccessed:       time.Now(),
@@ -417,6 +336,144 @@ func (c *FSCache) serveGETRequestCacheMissWithSleep(r *http.Request, w http.Resp
 
 	log.Printf("[INFO:DL:CREATED] %s%s - Wrote %d bytes\n", r.URL.Host, r.URL.Path, bw)
 	go c.TrackRequest(false, bw)
+}
+
+func (c *FSCache) prepareCacheMissTarget(
+	targetPath string,
+	r *http.Request,
+	w http.ResponseWriter,
+	resp *http.Response,
+) (int64, bool) {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		log.Printf("Error creating cache directory: %v\n", err)
+		http.Error(w, "Error creating cache directory", http.StatusInternalServerError)
+		return 0, false
+	}
+
+	requiredSize := resp.ContentLength
+	if requiredSize > 0 {
+		if err := ensureDiskSpace(targetPath, requiredSize); err != nil {
+			log.Printf("[ERROR:GET:DISK] Error reserving disk space for %s%s: %v\n", r.URL.Host, r.URL.Path, err)
+			http.Error(w, "Insufficient storage on cache server", http.StatusInsufficientStorage)
+			return 0, false
+		}
+	}
+
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Cache", "MISS")
+	setConditionalCacheMissHeaders(w, resp)
+	return requiredSize, true
+}
+
+func setConditionalCacheMissHeaders(w http.ResponseWriter, resp *http.Response) {
+	lastModified := resp.Header.Get("Last-Modified")
+	if lastModified != "" {
+		parsed, err := time.Parse(time.RFC1123, lastModified)
+		if err != nil {
+			log.Printf("Invalid Last-Modified header: %s (%v)", lastModified, err)
+		} else {
+			w.Header().Set("Last-Modified", parsed.UTC().Format(time.RFC1123))
+		}
+	}
+
+	if eTag := resp.Header.Get("ETag"); eTag != "" {
+		w.Header().Set("ETag", eTag)
+	}
+}
+
+func buildTempCachePath(targetPath string) string {
+	randomName := uuid.New().String()
+	return targetPath + "." + randomName + ".partial"
+}
+
+func (c *FSCache) createCacheMissTempFile(tempPath string, requiredSize int64, w http.ResponseWriter) (*os.File, bool) {
+	file, err := os.Create(tempPath)
+	if err != nil {
+		log.Printf("Error creating file: %v\n", err)
+		return nil, false
+	}
+
+	if requiredSize > 0 {
+		if err := preallocateFile(file, requiredSize); err != nil {
+			log.Printf("Error preallocating file: %v\n", err)
+			_ = file.Close()
+			http.Error(w, "Error reserving storage", http.StatusInternalServerError)
+			return nil, false
+		}
+	}
+
+	return file, true
+}
+
+func streamResponseToClientAndCache(w http.ResponseWriter, resp *http.Response, file *os.File) (int64, string, bool) {
+	w.WriteHeader(resp.StatusCode)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	clientWriter := responseWriterWithFlush(w)
+	hasher := sha256.New()
+	cacheDropper := newCacheDropWriter(file, cacheDropThreshold, cacheDropChunk)
+	multiWriter := io.MultiWriter(clientWriter, cacheDropper, hasher)
+	copyBuf := make([]byte, 32*1024)
+	reader := readerOnly{r: resp.Body}
+
+	bw, err := io.CopyBuffer(multiWriter, reader, copyBuf)
+	if err != nil {
+		log.Printf("Error writing file: %v\n", err)
+		return 0, "", false
+	}
+	cacheDropper.DropCache()
+
+	if err := file.Close(); err != nil {
+		log.Printf("Error closing file: %v\n", err)
+		return 0, "", false
+	}
+
+	return bw, hex.EncodeToString(hasher.Sum(nil)), true
+}
+
+func responseWriterWithFlush(w http.ResponseWriter) io.Writer {
+	if flusher, ok := w.(http.Flusher); ok {
+		return flushWriter{w: w, flusher: flusher}
+	}
+	return w
+}
+
+func parseLastModifiedForMetadata(lastModified string) time.Time {
+	lastModifiedTime := time.Now()
+	if lastModified == "" {
+		return lastModifiedTime
+	}
+
+	parsed, err := time.Parse(time.RFC1123, lastModified)
+	if err != nil {
+		log.Printf("Error parsing Last-Modified header: %v\n", err)
+		return lastModifiedTime
+	}
+
+	return parsed
+}
+
+func (c *FSCache) finalizeCacheMissFile(
+	tempPath string,
+	targetPath string,
+	lastModifiedTime time.Time,
+	w http.ResponseWriter,
+) bool {
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		log.Printf("Error renaming file: %v\n", err)
+		http.Error(w, "Error renaming file", http.StatusInternalServerError)
+		return false
+	}
+
+	if !lastModifiedTime.IsZero() && lastModifiedTime.Year() > 2000 {
+		if err := os.Chtimes(targetPath, time.Now(), lastModifiedTime); err != nil {
+			log.Printf("Error setting file times: %v\n", err)
+		}
+	}
+
+	return true
 }
 
 // copyResponseHeaders copies response headers from src to dst while stripping
