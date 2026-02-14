@@ -42,7 +42,7 @@ type Config struct {
 		CertificateDomain     string `yaml:"certificate_domain"` // Domain for which the certificate is valid
 		AIAAddress            string `yaml:"aia_address"`        // Authority Information Access (AIA) URL for the issued certificates (if empty, AIA extension is not added)
 		EnableCRL             bool   `yaml:"enable_crl"`         // Enable Certificate Revocation List (CRL) checking for the issued certificates
-		//CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
+		// CertificateChain 	 string `yaml:"certificate_chain"` // Path to the certificate chain file of the Intermediate CA (may only contain the Root CA certificate)
 	} `yaml:"https"`
 
 	Debug struct {
@@ -64,6 +64,9 @@ type Config struct {
 	} `yaml:"expiration"`
 }
 
+// ReadConfig reads the configuration from the specified file path and returns a
+// Config struct. It also applies default values for any missing fields and
+// allows overriding the cache directory with an environment variable.
 func ReadConfig(path string) (*Config, error) {
 	// Read the config file
 	data, err := os.ReadFile(path)

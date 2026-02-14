@@ -223,7 +223,9 @@ func (c *FSCache) handleRefreshStatus(statusCode, protocol int, localFile *url.U
 	case http.StatusOK:
 		return false
 	case http.StatusNotModified:
-		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+		if err := c.UpdateLastChecked(protocol, localFile.Host, localFile.Path); err != nil {
+			log.Printf("[ERROR:REFRESH:304] %s%s failed to update last checked: %v\n", localFile.Host, localFile.Path, err)
+		}
 		log.Printf("[INFO:REFRESH:304] %s%s has not changed\n", localFile.Host, localFile.Path)
 	case http.StatusNotFound:
 		c.MarkForDeletion(protocol, localFile.Host, localFile.Path)
@@ -265,7 +267,9 @@ func (c *FSCache) resolveRemoteLastModified(lastmod string, localFile *url.URL, 
 
 	lastModified = parsedLastModified
 	if !lastAccess.RemoteLastModified.IsZero() && lastModified.Before(lastAccess.RemoteLastModified) {
-		c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+		if err := c.UpdateLastChecked(protocol, localFile.Host, localFile.Path); err != nil {
+			log.Printf("[ERROR:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s failed to update last checked: %v\n", localFile.Host, localFile.Path, err)
+		}
 		log.Printf("[INFO:REFRESH:NOTMODIFIED:LAST-MODIFIED] %s%s has not changed\n", localFile.Host, localFile.Path)
 		return lastModified, true
 	}
@@ -279,7 +283,9 @@ func (c *FSCache) isUnchangedByETag(etag string, protocol int, localFile *url.UR
 		return false
 	}
 
-	c.UpdateLastChecked(protocol, localFile.Host, localFile.Path)
+	if err := c.UpdateLastChecked(protocol, localFile.Host, localFile.Path); err != nil {
+		log.Printf("[ERROR:REFRESH:NOTMODIFIED:ETAG] %s%s failed to update last checked: %v\n", localFile.Host, localFile.Path, err)
+	}
 	log.Printf("[INFO:REFRESH:NOTMODIFIED:ETAG] %s%s has not changed\n", localFile.Host, localFile.Path)
 	return true
 }

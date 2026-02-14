@@ -63,8 +63,8 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			// Serve a security.txt file.
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Contact: https://gitlab.com/bella.network/goaptcacher\n"))
-			w.Write([]byte("Expires: " + time.Now().AddDate(0, 0, 7).Format(time.RFC3339) + "\n"))
+			_, _ = w.Write([]byte("Contact: https://gitlab.com/bella.network/goaptcacher\n"))
+			_, _ = w.Write([]byte("Expires: " + time.Now().AddDate(0, 0, 7).Format(time.RFC3339) + "\n"))
 			return
 		}
 	}

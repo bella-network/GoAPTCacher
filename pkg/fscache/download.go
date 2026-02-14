@@ -50,7 +50,10 @@ func (c *FSCache) downloadFileSimple(url string, localPath string) error {
 	// Set file modification time
 	if lm := resp.Header.Get("Last-Modified"); lm != "" {
 		if t, err := http.ParseTime(lm); err == nil {
-			os.Chtimes(localPath, t, t)
+			err := os.Chtimes(localPath, t, t)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

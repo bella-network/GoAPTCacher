@@ -218,13 +218,18 @@ func (c *FSCache) serveRecoveredCacheMiss(protocol int, r *http.Request, w http.
 		return true
 	}
 
-	c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
+	err = c.Set(protocol, r.URL.Host, r.URL.Path, AccessEntry{
 		RemoteLastModified: fileInfo.ModTime(),
 		LastAccessed:       time.Now(),
 		URL:                r.URL,
 		Size:               fileInfo.Size(),
 		SHA256:             hash,
 	})
+	if err != nil {
+		log.Printf("Error updating access cache: %v\n", err)
+		http.Error(w, "Error updating cache metadata", http.StatusInternalServerError)
+		return true
+	}
 
 	w.Header().Add("X-Cache", "ROUNDTRIP")
 	c.serveGETRequest(r, w)

@@ -109,12 +109,12 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 			<ul>
 				<li>HTTP Proxy: Enabled</li>`
 
-		if config.HTTPS.Intercept {
+		switch {
+		case config.HTTPS.Intercept:
 			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted)</li>`
-		} else if !config.HTTPS.Prevent {
+		case !config.HTTPS.Prevent:
 			pageContent += `<li>HTTPS Proxy: Enabled (Interception <strong>disabled</strong>, HTTPS traffic will be passed through)</li>`
-		} else {
-			pageContent += `<li>HTTPS Proxy: Disabled, HTTPS traffic will be blocked</li>`
+		default:
 		}
 
 		// Main port information
@@ -229,7 +229,8 @@ func httpPageStats() string {
 
 	response := `<h2>Cache statistics</h2>
 	<p>
-		This page shows the cache statistics of this proxy server including the total number of cached files, the total number of requests, hits, misses, and the total traffic served to clients and total traffic fetched from the repository upstream servers.
+		This page shows the cache statistics of this proxy server including the total number of cached files,
+		the total number of requests, hits, misses, and the total traffic served to clients and total traffic fetched from the repository upstream servers.
 		You can also see the last 14 days of traffic statistics in detail below.
 	</p>
 	<h3>Lifetime statistics</h3>

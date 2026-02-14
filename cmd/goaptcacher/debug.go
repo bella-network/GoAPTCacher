@@ -66,7 +66,7 @@ func logDebugStats() {
 		formatBytes(mem.HeapReleased),
 		formatBytes(mem.Sys),
 		mem.NumGC,
-		time.Duration(mem.PauseTotalNs),
+		time.Duration(mem.PauseTotalNs), //nolint:gosec
 	)
 }
 

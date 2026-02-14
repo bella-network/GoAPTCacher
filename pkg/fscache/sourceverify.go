@@ -293,7 +293,9 @@ func fetchPackagesIndex(client *http.Client, u string) (map[string]string, error
 	}
 
 	var reader io.Reader = resp.Body
-	if strings.HasSuffix(u, ".gz") {
+
+	switch {
+	case strings.HasSuffix(u, ".gz"):
 		gz, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, err
@@ -301,14 +303,14 @@ func fetchPackagesIndex(client *http.Client, u string) (map[string]string, error
 		defer gz.Close()
 		reader = gz
 
-	} else if strings.HasSuffix(u, ".bz2") {
+	case strings.HasSuffix(u, ".bz2"):
 		bz2a := bzip2.NewReader(resp.Body)
 		if bz2a == nil {
 			return nil, errors.New("failed to create bzip2 reader")
 		}
 		reader = bz2a
 
-	} else if strings.HasSuffix(u, ".xz") {
+	case strings.HasSuffix(u, ".xz"):
 		xza, err := xz.NewReader(resp.Body)
 		if err != nil {
 			return nil, err

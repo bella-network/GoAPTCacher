@@ -3,19 +3,32 @@ linters:
   enable:
     - bodyclose
     - copyloopvar
+    - dupl
+    - errcheck
     - exhaustive
+#   - goconst --- Disabled because it produces too many false positives, e.g. for HTTP header names and values.
     - gocritic
+    - gocyclo
     - gomodguard
     - gosec
+    - govet
+    - ineffassign
     - lll
     - makezero
     - misspell
+    - nilnil
+    - nolintlint
     - prealloc
     - revive
     - rowserrcheck
+    - staticcheck
+    - unconvert
     - unparam
-    - whitespace
+    - unused
+    - wastedassign
   settings:
+    lll:
+      line-length: 250
     misspell:
       locale: US
   exclusions:
