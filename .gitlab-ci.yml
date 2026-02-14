@@ -38,9 +38,9 @@ lint:
     # Write the code coverage report to gl-code-quality-report.json
     # and print linting issues to stdout in the format: path/to/file:line description
     # remove `--issues-exit-code 0` or set to non-zero to fail the job if linting issues are detected
-    - golangci-lint run --issues-exit-code 0 --out-format code-climate | tee gl-code-quality-report.json | jq -r '.[] | "\(.location.path):\(.location.lines.begin) \(.description)"'
+    - golangci-lint run --issues-exit-code 0 --output.code-climate.path gl-code-quality-report.json || true
     # Generate report.xml for SonarQube in checkstyle format
-    - golangci-lint run --issues-exit-code 0 --out-format checkstyle > report.xml || true
+    - golangci-lint run --issues-exit-code 0 --output.checkstyle.path report.xml || true
   artifacts:
     reports:
       codequality: gl-code-quality-report.json

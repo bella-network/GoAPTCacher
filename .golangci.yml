@@ -1,29 +1,40 @@
----
-linters-settings:
-  misspell:
-    locale: "US"
-
+version: "2"
 linters:
   enable:
     - bodyclose
     - copyloopvar
-    - errcheck
     - exhaustive
     - gocritic
-    - goimports
     - gomodguard
     - gosec
-    - gosimple
-    - govet
-    - ineffassign
     - lll
     - makezero
     - misspell
     - prealloc
     - revive
     - rowserrcheck
-    - staticcheck
-    - typecheck
     - unparam
-    - unused
     - whitespace
+  settings:
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
