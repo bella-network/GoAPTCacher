@@ -29,6 +29,7 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - \.cache/
 formatters:
   enable:
     - goimports
@@ -38,3 +39,4 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+      - \.cache/
