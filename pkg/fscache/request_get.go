@@ -142,6 +142,14 @@ func (c *FSCache) backgroundFileTasks(request *url.URL) {
 
 // serveGETRequestCacheMiss is the function to serve a GET request for a client if the cache was missed.
 func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWriter, retry uint64) {
+	c.serveGETRequestCacheMissWithSleep(r, w, retry, time.Sleep)
+}
+
+func (c *FSCache) serveGETRequestCacheMissWithSleep(r *http.Request, w http.ResponseWriter, retry uint64, sleepFn func(time.Duration)) {
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
+
 	protocol := DetermineProtocolFromURL(r.URL)
 
 	// If retry count is too high, return an error to the client.
@@ -160,8 +168,8 @@ func (c *FSCache) serveGETRequestCacheMiss(r *http.Request, w http.ResponseWrite
 	// until the download is finished.
 	created := c.CreateExclusiveWriteLock(protocol, r.URL.Host, r.URL.Path)
 	if !created {
-		time.Sleep(time.Second)
-		c.serveGETRequestCacheMiss(r, w, retry+1)
+		sleepFn(time.Second)
+		c.serveGETRequestCacheMissWithSleep(r, w, retry+1, sleepFn)
 		return
 	}
 	defer c.DeleteWriteLock(protocol, r.URL.Host, r.URL.Path)

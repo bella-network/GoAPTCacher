@@ -16,13 +16,22 @@ type cacheDropWriter struct {
 	chunk     int64
 	threshold int64
 	enabled   bool
+	dropRange func(file *os.File, offset, length int64) error
 }
 
 func newCacheDropWriter(file *os.File, threshold, chunk int64) *cacheDropWriter {
+	return newCacheDropWriterWithDropRange(file, threshold, chunk, platformDropCacheRange)
+}
+
+func newCacheDropWriterWithDropRange(file *os.File, threshold, chunk int64, dropRange func(file *os.File, offset, length int64) error) *cacheDropWriter {
+	if dropRange == nil {
+		dropRange = platformDropCacheRange
+	}
 	return &cacheDropWriter{
 		f:         file,
 		chunk:     chunk,
 		threshold: threshold,
+		dropRange: dropRange,
 	}
 }
 
@@ -43,7 +52,7 @@ func (w *cacheDropWriter) Write(p []byte) (int, error) {
 
 	w.pending += int64(n)
 	if w.pending >= w.chunk {
-		_ = platformDropCacheRange(w.f, w.offset-w.pending, w.pending)
+		_ = w.dropRange(w.f, w.offset-w.pending, w.pending)
 		w.pending = 0
 	}
 
@@ -55,8 +64,8 @@ func (w *cacheDropWriter) DropCache() {
 		return
 	}
 	if w.pending > 0 {
-		_ = platformDropCacheRange(w.f, w.offset-w.pending, w.pending)
+		_ = w.dropRange(w.f, w.offset-w.pending, w.pending)
 		w.pending = 0
 	}
-	_ = platformDropCacheRange(w.f, 0, 0)
+	_ = w.dropRange(w.f, 0, 0)
 }
