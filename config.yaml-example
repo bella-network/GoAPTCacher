@@ -1,10 +1,19 @@
+# The main cache directory where packages and metadata are stored.
+# Usage and traffic stats are kept in memory and flushed periodically to
+# cache_directory/.stats.json.
 cache_directory: "/var/cache/goaptcacher"
 
+# The main listening port for HTTP connections (default: 8090)
 listen_port: 8090
+# The main listening port for HTTPS connections (default: 8091)
 listen_port_secure: 8091
+# Alternative listening ports (e.g., for compatibility with apt-cacher-ng, no default - this is needed for auto-apt-proxy discovery fallback)
 alternative_ports:
   - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
 
+# List of domains which are allowed to be cached. Requests to other domains will be denied.
+# Supports bare domains and leading-dot wildcards (.debian.org).
+# If empty or not set, all domains are allowed.
 domains:
   - "archive.ubuntu.com" # Ubuntu archive
   - "security.ubuntu.com" # Ubuntu security
@@ -28,31 +37,42 @@ domains:
   - "raspbian.raspberrypi.org" # Raspbian
   - "archive.raspberrypi.org" # Raspbian archive
 
+# Passthrough domains are always tunneled to origin, even when interception is enabled.
+# Use this for domains that require authentication or have certificate pinning. Nothing is cached for these domains.
 passthrough_domains:
   - "esm.ubuntu.com" # Ubuntu ESM (authentication required)
   - "enterprise.proxmox.com" # Proxmox VE with subscription (authentication required)
 
+# HTTPS interception settings (if enabled, requires cert/key) and allows to intercept HTTPS traffic to cache packages that are served over HTTPS.
 https:
-  intercept: false
-  cert: "/config/public.key"
-  key: "/config/private.key"
-  password: "my-password"
-  certificate_domain: "mydomain.com"
-  aia_address: "http://mydomain.com/goaptcacher.crt"
-  enable_crl: false
+  prevent: false # Prevent HTTPS requests from being cached and proxied
+  intercept: true # Enable HTTPS interception (set to false to run in pure proxy/tunnel mode)
 
-remap:
-  - from: "ubuntu.lagis.at"
-    to: "archive.ubuntu.com"
+  cert: "public.key" # Path to the Public Key File (PEM format) of the Intermediate CA which will issue leaf certificates on-the-fly
+  key: "private.key" # Path to the Private Key File (PEM format) of the Intermediate CA
+  password: "mysecret" # Optional password for encrypted key files
+  certificate_domain: "cache.example.com" # The domain name that will be used in the generated leaf certificates (must match the SAN of the cert)
+  aia_address: "http://cache.example.com/goaptcacher.crt" # Authority Information Access (AIA) URL to include in leaf certs for clients to download the CA cert
+  enable_crl: false # Enable CRL generation and serving (allows clients to check for revoked certs)
 
+
+# Overrides specific distributions to use a different default mirror than the official one.
+# Useful for forcing local mirrors or faster mirrors.
 overrides:
   ubuntu_server: "archive.ubuntu.com"
   debian_server: "archive.debian.org"
 
+# Allows overriding specific domains to use a different mirror. Useful for forcing local mirrors or faster mirrors.
+remap:
+  - from: "ubuntu.lagis.at"
+    to: "archive.ubuntu.com"
+
+# Web interface settings to display overview of configured domains, setup guide and cache stats.
 index:
   enable: true
   hostnames:
     - "myhostname"
+  contact: "If you have problems, please contact <a href=\"mailto:support@example.com\">IT support</a>."
 
 debug:
   enable: false

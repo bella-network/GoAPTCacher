@@ -1,30 +1,41 @@
-# Go APT Cacher
+# Go APT Cacher 🚀
 
-GoAPTCacher is a pull-through caching proxy for Debian/Ubuntu APT repositories (similar to `apt-cacher-ng` or `squid` with store), built in Go. It speeds up package installs in CI/CD and isolated networks by caching requested artifacts on disk and serving repeat requests locally.
+GoAPTCacher is a pull-through caching proxy for Debian/Ubuntu style APT repositories (similar to `apt-cacher-ng` or `squid` with store).
+It caches requested artifacts on local disk and serves repeated requests locally. This can save bandwidth and speed up package installations in environments with multiple machines or CI runners. Additionally it allows to isolate systems from accessing the public internet while still providing access to necessary package repositories.
 
-## Features
+## Project status ⚠️
 
-- **Pull-through cache** – Only caches packages that clients actually request.
-- **Local filesystem store** – Avoids re-downloads; supports pre-seeding.
-- **HTTP & HTTPS** – Cache both HTTP and HTTPS repositories.
-- **On-the-fly certificates (optional)** – Intercept HTTPS by minting per-host leaf certs from an intermediate CA to enable caching of encrypted traffic.
-- **HTTPS passthrough mode** – Skip interception and tunnel to origin while still enforcing allowlists.
-- **Domain allow/deny** – Restrict to an explicit set of repository domains.
-- **URL rewrite & mirror overrides** – e.g., us.archive.ubuntu.com -> de.archive.ubuntu.com, or force NetCologne mirrors.
-- **Proxy-only mode** – Use purely as an APT proxy without interception.
-- **Auto-discovery** – DNS SRV and mDNS helpers so clients can find the cache automatically.
-- **Web interface** – Inspect cache statistics, health, and configuration details.
-- **Expiration** – Automatic purge of partial/abandoned downloads and stale entries.
+`main` is the current development branch. It is kept runnable but can contain breaking changes or bugs.
+For production use, please check the [releases](https://gitlab.com/bella.network/goaptcacher/-/releases) and use tagged versions. The preferred installation method is via the Debian/Ubuntu package, but you can also build from source or use the provided Docker image.
 
-> **Preview Build**
-> The main branch contains the latest changes and is considered a preview build. While it is kept executable, it may contain bugs. Use for testing/evaluation; avoid in production.
+## Feature overview ✨
 
-## Quick Start
+- Pull-through cache for APT traffic (`GET`/`HEAD`), including streaming cache-miss downloads.
+- HTTP proxying and HTTPS support via:
+  - tunnel mode (`CONNECT`, no TLS interception)
+  - optional TLS interception (MITM) for caching HTTPS repositories
+- Domain policy controls:
+  - `domains` (cacheable domains)
+  - `passthrough_domains` (always proxied, never cached)
+- Mirror routing:
+  - distro overrides (`ubuntu_server`, `debian_server`)
+  - path remap rules (`remap`)
+- Automatic cache refresh logic with conditional upstream checks (`If-Modified-Since`/`If-None-Match`).
+- Automatic expiration of unused cache entries.
+- Built-in web UI (`/_goaptcacher/`) with overview, cache metrics, and setup guide.
+- Persistent statistics in `cache_directory/.stats.json`.
+- Persistent per-file metadata in sidecar files (`*.access.json`).
+- Optional mDNS announcement (`_apt_proxy._tcp.local`).
+- Optional CRL generation and certificate download endpoint for interception setups.
+- Debug mode with JSON diagnostics and optional pprof endpoints/snapshots.
+
+## Installation 📦
+
+### Debian/Ubuntu package 🐧
 
 GoAPTCacher can be installed by apt using the APT repository hosted on repo.bella.network. A configuration guide can be found on [https://repo.bella.network/](https://repo.bella.network/).
 
 ```bash
-# 1) Install (via APT repo)
 echo "Types: deb
 URIs: https://repo.bella.network/deb
 Suites: stable
@@ -36,35 +47,21 @@ Signed-By: /usr/share/keyrings/bella-archive-keyring.gpg
 curl -fsSL https://repo.bella.network/_static/bella-archive-keyring.gpg \
   | sudo tee /usr/share/keyrings/bella-archive-keyring.gpg >/dev/null
 
-sudo apt update && sudo apt install goaptcacher
-
-# 2) Minimal config
-sudo tee /etc/goaptcacher.yaml >/dev/null <<'YAML'
-cache_directory: "/var/cache/goaptcacher"
-domains:
-  - "archive.ubuntu.com"
-  - "security.ubuntu.com"
-  - "ports.ubuntu.com"
-passthrough_domains:
-  - "repo.bella.network"
-expiration:
-  unused_days: 60
-index:
-  enable: true
-YAML
-
-# 3) Start
-sudo systemctl enable --now goaptcacher
-
-# 4) Point a client at the proxy (on the client machine)
-echo 'Acquire::http::Proxy "http://<cache-host>:8090/";' \
- | sudo tee /etc/apt/apt.conf.d/01proxy
 sudo apt update
+sudo apt install goaptcacher
 ```
 
 After installation, you can access the web interface at `http://<cache-host>:8090/_goaptcacher/` or `https://<cache-host>:8091/_goaptcacher/` to view cache statistics and configuration details.
 
-### Docker
+### Build from source 🛠️
+
+You can also build GoAPTCacher from source. Make sure you have Go installed (latest version recommended). Then run:
+
+```bash
+go build -o goaptcacher ./cmd/goaptcacher
+```
+
+### Docker (example) 🐳
 
 You can also run GoAPTCacher in a Docker container. Here is an example command to get you started:
 
@@ -72,8 +69,9 @@ You can also run GoAPTCacher in a Docker container. Here is an example command t
 docker run -d --name goaptcacher \
   -p 8090:8090 \
   -p 8091:8091 \
-  -v $PWD/goaptcacher.yaml:/etc/goaptcacher.yaml:ro \
-  -v $PWD/cache:/var/cache/goaptcacher \
+  -p 3142:3142 \
+  -v "$PWD/config.yaml":/etc/goaptcacher.yaml:ro \
+  -v "$PWD/cache":/var/cache/goaptcacher \
   registry.gitlab.com/bella.network/goaptcacher:latest
 ```
 
@@ -91,90 +89,42 @@ I was dissatisfied with the performance and quality of the apt-cacher-ng package
 
 That's why I created an alternative with this program that is more in line with my wishes and requirements.
 
-## Configuration
+## Quick start ⚡
 
 The configuration file is structured in YAML format and contains the following example configuration. This is a sample configuration file with explanations for each section.
 
+1. 📝 Create config (example: `/etc/goaptcacher.yaml`):
+
 ```yaml
-# The main cache directory where packages and metadata are stored
 cache_directory: "/var/cache/goaptcacher"
-
-# The main listening port for HTTP connections (default: 8090)
 listen_port: 8090
-
-# The main listening port for HTTPS connections (default: 8091)
 listen_port_secure: 8091
 
-# Alternative listening ports (e.g., for compatibility with apt-cacher-ng, no default)
 alternative_ports:
-  - 3142 # Default apt-cacher/apt-cacher-ng port for compatibility
+  - 3142
 
-# Usage and traffic stats are kept in memory and flushed periodically to
-# cache_directory/.stats.json.
-
-# List of domains which are allowed to be cached. Requests to other domains will be denied.
-# Supports bare domains and leading-dot wildcards (.debian.org).
-# If empty or not set, all domains are allowed.
 domains:
-  - "archive.ubuntu.com" # Ubuntu archive
-  - "security.ubuntu.com" # Ubuntu security
-  - "ports.ubuntu.com" # Ubuntu ports
-  - "esm.ubuntu.com" # Ubuntu ESM
-  - "motd.ubuntu.com" # Ubuntu MOTD
-  - "ppa.launchpad.net" # Ubuntu PPAs
+  - "archive.ubuntu.com"
+  - "security.ubuntu.com"
+  - "ports.ubuntu.com"
+  - "security.debian.org"
+  - ".debian.org"
 
-  - "security.debian.org" # Debian security
-  - ".debian.org" # Debian archive
-
-  - "raspbian.raspberrypi.org" # Raspbian
-  - "archive.raspberrypi.org" # Raspbian archive
-
-# Passthrough domains are always tunneled to origin, even when interception is enabled.
-# Use this for domains that require authentication or have certificate pinning. Nothing is cached for these domains.
 passthrough_domains:
-  - "esm.ubuntu.com" # Ubuntu ESM (authentication required)
-  - "enterprise.proxmox.com" # Proxmox VE with subscription (authentication required)
-  - "repo.bella.network" # Bella Network APT repo (self-hosted - GoAPTCacher)
+  - "esm.ubuntu.com"
 
-# HTTPS interception settings (if enabled, requires cert/key) and allows to intercept HTTPS traffic to cache packages that are served over HTTPS.
 https:
-  prevent: false # Prevent HTTPS requests from being cached and proxied
-  intercept: true # Enable HTTPS interception (set to false to run in pure proxy/tunnel mode)
+  prevent: false
+  intercept: false
 
-  cert: "public.key" # Path to the Public Key File (PEM format) of the Intermediate CA which will issue leaf certificates on-the-fly
-  key: "private.key" # Path to the Private Key File (PEM format) of the Intermediate CA
-  password: "mysecret" # Optional password for encrypted key files
-  certificate_domain: "cache.example.com" # The domain name that will be used in the generated leaf certificates (must match the SAN of the cert)
-  aia_address: "http://cache.example.com/goaptcacher.crt" # Authority Information Access (AIA) URL to include in leaf certs for clients to download the CA cert
-  enable_crl: false # Enable CRL generation and serving (allows clients to check for revoked certs)
-
-# Overrides specific distributions to use a different default mirror than the official one.
-# Useful for forcing local mirrors or faster mirrors.
-overrides:
-  ubuntu_server: "mirror.netcologne.de"
-  debian_server: "mirror.netcologne.de"
-
-# Allows overriding specific domains to use a different mirror. Useful for forcing local mirrors or faster mirrors.
-remap:
-  - from: "ubuntu.lagis.at"
-    to: "at.archive.ubuntu.com"
-
-# Web interface settings to display overview of configured domains, setup guide and cache stats.
 index:
   enable: true
-  hostnames: # List of hostnames or IPs the web interface defaults to for certificate generation and display.
+  hostnames:
     - "cache.example.com"
-    - "10.20.30.40"
-  contact: "Contact <a href='mailto:your@mail.address'>First Last</a> for support" # Contact information to display in the web interface footer.
 
-# mDNS/Bonjour service announcement to allow clients to discover the proxy automatically.
-# Clients can then find the proxy using tools like avahi-browse or dns-sd.
-mdns: true
-
-# Expiration settings to automatically delete unused or old packages from the cache.
-expiration:
-  unused_days: 60 # Delete packages that have not been accessed in the last N days.
 ```
+
+All configuration options are explained within the example configuration file at [config.yaml-example](./config.yaml-example). You can use this file as a template and modify it according to your needs.
 
 **Notes**
 
@@ -182,63 +132,97 @@ expiration:
 - domains supports bare domains and leading-dot wildcards (.debian.org).
 - passthrough_domains are always tunneled even when interception is on.
 
-### Client configuration (APT)
-
-Set a proxy (works for HTTP repositories):
+2. ▶️ Start service:
 
 ```bash
-echo 'Acquire::http::Proxy "http://<cache-host>:8080/";' \
- | sudo tee /etc/apt/apt.conf.d/01proxy
+sudo systemctl enable --now goaptcacher
 ```
 
-If you use HTTPS interception, clients must trust your CA (see next section).
-
-### HTTPS interception & trust (optional)
-
-If `https.intercept: true`:
-
-**Intermediate CA**: Provide an intermediate CA certificate/key in the paths configured under https.cert and https.key.
-
-**Distribute CA to clients** so they trust the on-the-fly leaf certs:
+3. 👥 Configure client proxy:
 
 ```bash
-sudo cp your-ca.crt /usr/local/share/ca-certificates/goaptcacher.crt
-sudo update-ca-certificates
+cat <<'APT' | sudo tee /etc/apt/apt.conf.d/10proxy
+Acquire::http::Proxy "http://<cache-host>:8090/";
+Acquire::https::Proxy "http://<cache-host>:8090/";
+APT
+
+sudo apt update
 ```
 
-Verify:
+## Request flow and cache behavior 🔄
 
-```bash
-export https_proxy="http://<cache-host>:8090"
-curl -v https://archive.ubuntu.com/ubuntu/dists/
-```
+- Supported methods: `GET`, `HEAD`, `CONNECT`.
+- `GET`:
+  - cache hit => serves file with `X-Cache: HIT`
+  - cache miss => streams upstream response to client and cache with `X-Cache: MISS`
+- `HEAD`:
+  - if cached, returns file metadata headers
+  - if not cached, file is fetched once and then headers are returned (`X-Cache: MISS`)
+- `CONNECT`:
+  - `https.prevent: true` => request is rejected (`403`)
+  - passthrough domain or `https.intercept: false` => plain tunnel
+  - `https.intercept: true` => intercepted TLS flow handled via proxy logic
 
-If you can't roll out a CA, set `intercept: false` and rely on passthrough.
+### Important: empty domain configuration ❗
 
-For HTTPS repositories you may need to add the following to your APT config:
+If both `domains` and `passthrough_domains` are empty, all hosts are allowed, but `GET`/`HEAD` requests are tunneled (effectively no cache usage). The service logs a warning for this mode.
 
-```bash
-echo 'Acquire::https::Proxy "http://<cache-host>:8080/";' \
- | sudo tee /etc/apt/apt.conf.d/01proxy
-```
+## Web and debug endpoints 🌐
 
-### Auto-discovery (optional)
+Base path: `/_goaptcacher/`
 
-GoAPTCacher is able to announce itself via DNS records, mDNS and DNS-SRV records so clients can find it automatically.
+Note: requesting `/` returns `406 Not Acceptable` with a redirect hint to `/_goaptcacher/` (for `auto-apt-proxy` compatibility checks).
 
-- **DNS records**: Using auto-apt-proxy (`apt install auto-apt-proxy`), clients can discover the proxy via DNS. You need to create a DNS SRV record for `_apt_proxy._tcp.<your-dns-suffix>` in your domain pointing to the GoAPTCacher instance. E.g. `_apt_proxy._tcp.example.com. 3600 IN SRV 0 0 8090 cache.example.com.`
-- **DNS-SRV override**: Configure DNS-SRV records for the domains you want to cache. E.g. `_http._tcp.at.archive.ubuntu.com. 3600 IN SRV 0 0 8090 cache.example.com.`. This will make clients use the proxy for that domain.
-- **mDNS**: Enable `mdns: true` to announce the service via mDNS/Bonjour. Clients can then discover the service using tools like `avahi-browse` or `dns-sd`.
+- `/_goaptcacher/` overview
+- `/_goaptcacher/cache` cache/storage overview
+- `/_goaptcacher/stats` request and traffic stats
+- `/_goaptcacher/setup` client setup guide
+- `/_goaptcacher/goaptcacher.crt` interception CA certificate (if interception is enabled)
+- `/_goaptcacher/revocation.crl` CRL file (if CRL is enabled)
+- `/robots.txt` disallow-all robots policy
+- `/.well-known/security.txt` contact metadata for security reporting
 
-## Troubleshooting
+Debug (only when `debug.enable: true`):
 
-- Clients see TLS errors -> The client doesn't trust your interception CA. Either deploy the CA or disable interception.
-- Misses for expected packages -> Confirm the client is actually using the proxy (01proxy present and correct host/port).
-- Origin errors (403/401) -> Repository requires subscription/auth; add the domain to passthrough_domains.
-- Slow or no UI -> Check service logs; verify `index.enable: true` and that the service binds to the expected interface.
-- Hash mismatches -> Check if a mirror override or remap is causing packages to be fetched from unexpected hosts. You can also delete the corrupted files from the cache directory.
+- `/_goaptcacher/debug` JSON runtime diagnostics
+- `/_goaptcacher/debug/pprof` pprof handlers
 
-## Tested
+`debug.allow_remote: false` restricts debug endpoints to loopback requests.
+
+## Runtime options 🏁
+
+Command line:
+
+- `-h`, `--help` show help
+- `-v`, `--version` show version/build info
+- `-c`, `--config <path>` config file path
+
+Environment variables:
+
+- `CONFIG` config file path (used when `-c` is not set)
+- `CACHE_DIR` overrides `cache_directory`
+
+## Auto-discovery notes 📡
+
+- `auto-apt-proxy` clients can discover the proxy via DNS SRV `_apt_proxy._tcp.<domain>`.
+- You can also use per-repository SRV records such as `_http._tcp.<repo-domain>` or `_https._tcp.<repo-domain>` to steer repository traffic through this proxy.
+
+## Troubleshooting 🩺
+
+- TLS failures on clients:
+  - client does not trust interception CA; distribute CA or disable interception
+- Packages not cached as expected:
+  - verify domain policy (`domains`, `passthrough_domains`), then check `X-Cache` headers and `/_goaptcacher/stats`
+- Unexpected passthrough/no cache:
+  - verify that domain lists are not empty unless tunnel-only behavior is desired
+- 403 errors:
+  - host not in allowlist or `https.prevent` blocks `CONNECT`
+- Storage errors:
+  - cache miss writes can fail when disk space is insufficient (`507`/storage errors)
+
+## Tested ✅
+
+This program has been tested with the following repositories and environments:
 
 - Ubuntu Desktop and Server
 - Debian
@@ -257,7 +241,12 @@ GoAPTCacher is able to announce itself via DNS records, mDNS and DNS-SRV records
   - aptly
   - reprepro
 
-Please note that for Debian, requests to `/debian-security/` will always be mapped to `security.debian.org` regardless of the mirror used for other requests. This is due to the way Debian structures its repositories.
+Please note that for Debian, requests to `/debian-security/` will always be mapped to `security.debian.org` regardless of the mirror used for other requests. This is due to the way Debian sometimes serves security updates from a different domain and the need to ensure that security updates are always fetched from the official security repository.
+
+## Non-goals 🚫
+
+- No full mirror sync/preload; only requested artifacts are cached.
+- No generic forward proxy feature set beyond APT-oriented `GET`/`HEAD`/`CONNECT` flows.
 
 # Feedback and Contributions
 
