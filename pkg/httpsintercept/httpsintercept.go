@@ -273,10 +273,18 @@ func (c *Intercept) GC() {
 	log.Printf("CertificateStorage GC: Removed %d certificates, %d remain", len(toDelete), len(c.certStorage.Certificates))
 }
 
-// returnCert is called by TLS server including provided SNI name
+// ReturnCert is called by TLS server including provided SNI name
 func (c *Intercept) ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	domain := strings.ToLower(helloInfo.ServerName)
-	// If no SNI domain was found, use certificate for dns
+	// If no SNI domain was found, try to get the IP from the connection
+	if domain == "" {
+		if conn := helloInfo.Conn; conn != nil {
+			if localAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+				domain = localAddr.IP.String()
+			}
+		}
+	}
+	// If still no domain found, use certificate for configured domain
 	if domain == "" {
 		domain = c.domain
 	}
