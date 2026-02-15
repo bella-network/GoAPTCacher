@@ -1,18 +1,22 @@
 package main
 
 import (
-	_ "embed"
 	"fmt"
+	"html"
+	htmltemplate "html/template"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	web "gitlab.com/bella.network/goaptcacher/lib/web"
 	"gitlab.com/bella.network/goaptcacher/pkg/buildinfo"
 )
+
+const statsHistoryDays = 14
 
 // handleIndexRequests is the handler function for requests to the index page of
 // the proxy server. It serves a simple interface with a description of the
@@ -43,6 +47,10 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(web.Style)
+	case "/favicon.ico", "favicon.ico":
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(web.Favicon)
 	case "/", "":
 		httpServeSubpage(w, "index")
 	case "/cache":
@@ -72,6 +80,19 @@ func helperHTTPConstants() map[string]any {
 		"ListenPortSecure": config.ListenPortSecure,
 		"Domains":          config.Domains,
 		"Version":          buildinfo.Version,
+		"Contact":          htmltemplate.HTML(strings.TrimSpace(config.Index.Contact)),
+		"Year":             time.Now().Year(),
+	}
+}
+
+func activeNavFromSubpage(subpage string) string {
+	switch subpage {
+	case "setup":
+		return "setup"
+	case "stats", "cache":
+		return "stats"
+	default:
+		return "index"
 	}
 }
 
@@ -86,108 +107,28 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 
 	switch subpage {
 	case "index":
-		// Index only contains a main description of this proxy server without
-		// any additional functionality.
-		pageContent = `<h2>Welcome to GoAPTCacher</h2>
-		<p>
-			GoAPTCacher is a simple caching proxy server for APT based repositories.
-			It caches packages and metadata from upstream repositories to speed up package installations and updates on multiple systems.<br>
-			<br>
-			This page is shown to you because you have accessed the proxy server directly or with an invalid configuration.<br>
-			<br>
-			If you want to use this proxy server, please configure your APT client to use this server as a proxy. For more information, please check the <a href="/_goaptcacher/setup">setup page</a>.<br>
-			<br>
-			Detailed cache statistics and management are available on the <a href="/_goaptcacher/stats">stats page</a>.<br>
-			<br>
-			For more information about this project, please visit the <a href="https://gitlab.com/bella.network/goaptcacher">GitLab repository</a>.
-		</p>`
-
-		// Display which features are enabled, print warning if HTTPS interception is enabled
-		pageContent += `<h3>Features enabled</h3>
-		<p>
-			The following features are enabled on this proxy server:
-			<ul>
-				<li>HTTP Proxy: Enabled</li>`
-
-		switch {
-		case config.HTTPS.Intercept:
-			pageContent += `<li>HTTPS Proxy: Enabled (<strong style="color: red;">Attention:</strong> Interception active, HTTPS traffic will be decrypted)</li>`
-		case !config.HTTPS.Prevent:
-			pageContent += `<li>HTTPS Proxy: Enabled (Interception <strong>disabled</strong>, HTTPS traffic will be passed through)</li>`
-		default:
-		}
-
-		// Main port information
-		pageContent += `<li>HTTP Port: ` + strconv.Itoa(config.ListenPort) + `</li>`
-
-		// Display HTTPS port if interception is enabled
-		if config.HTTPS.Intercept {
-			pageContent += `<li>HTTPS Port: ` + strconv.Itoa(config.ListenPortSecure) + `</li>`
-		}
-
-		// Display list of alternative ports if configured
-		if len(config.AlternativePorts) > 0 {
-			pageContent += `<li>Alternative Ports: <ul>`
-			for _, port := range config.AlternativePorts {
-				pageContent += "<li>" + strconv.Itoa(port) + "</li>"
-			}
-			pageContent += `</ul></li>`
-		}
-
-		// Display list of remapped URLs
-		pageContent += `<li>Remapped URLs: <ul>`
-		for _, remap := range config.Remap {
-			pageContent += "<li>" + remap.From + " -> " + remap.To + "</li>"
-		}
-		pageContent += `</ul></li>`
-
-		// Display list of overrides
-		pageContent += `<li>Overrides: <ul>`
-		if config.Overrides.UbuntuServer != "" {
-			pageContent += "<li><strong>Ubuntu</strong>: " + config.Overrides.UbuntuServer + "</li>"
-		}
-		if config.Overrides.DebianServer != "" {
-			pageContent += "<li><strong>Debian</strong>: " + config.Overrides.DebianServer + "</li>"
-		}
-		pageContent += `</ul></li>`
-		pageContent += `</ul></p>`
-
-		// List configured domains and passthrough domains
-
-		pageContent += `<h3>Configured domains</h3>
-		<p><ul>`
-
-		// Display list of configured domains
-		pageContent += `<li>Configured domains (caching enabled): <ul>`
-		for _, domain := range config.Domains {
-			pageContent += "<li>" + domain + "</li>"
-		}
-		// Display list of passthrough domains
-		pageContent += `</ul></li><li>Passthrough domains (proxy without caching): <ul>`
-		for _, domain := range config.PassthroughDomains {
-			pageContent += "<li>" + domain + "</li>"
-		}
-		pageContent += `</li></ul></p>`
-
-		title = "GoAPTCacher"
+		pageContent = httpPageIndex()
+		title = "GoAPTCacher - Overview"
+	case "cache":
+		pageContent = httpPageCache()
+		title = "GoAPTCacher - Cache"
 	case "stats":
-		// Stats page contains the cache statistics of this proxy server.
 		pageContent = httpPageStats()
-		title = "Cache statistics - GoAPTCacher"
+		title = "GoAPTCacher - Statistics"
 	case "setup":
-		// Setup page contains the configuration of this proxy server.
 		pageContent = httpPageSetup()
-		title = "Setup - GoAPTCacher"
+		title = "GoAPTCacher - Setup"
 	case "404":
-		// 404 page is shown if the requested page does not exist.
-		pageContent = `
-<h2>Page not found</h2>
-<p>
-	The requested page you are looking for does not exist on this server. <br>
-	Please check the URL and try again.
-</p>
-`
-		title = "Page not found - GoAPTCacher"
+		pageContent = `<section class="panel stack-lg">
+			<p class="eyebrow">Error 404</p>
+			<h2>Page not found</h2>
+			<p class="lead">The requested route does not exist on this instance.</p>
+			<div class="actions">
+				<a class="button" href="/_goaptcacher/">Back to overview</a>
+				<a class="button button-secondary" href="/_goaptcacher/setup">Open setup guide</a>
+			</div>
+		</section>`
+		title = "GoAPTCacher - Not found"
 	}
 
 	// Execute the template with the main page content and the template
@@ -200,12 +141,130 @@ func httpServeSubpage(w http.ResponseWriter, subpage string) {
 
 	err = temp.Execute(w, map[string]any{
 		"Title":   title,
-		"Content": pageContent,
+		"Content": htmltemplate.HTML(pageContent),
 		"Const":   helperHTTPConstants(),
+		"Active":  activeNavFromSubpage(subpage),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func httpPageIndex() string {
+	host := preferredIndexHost()
+	httpEndpoint := fmt.Sprintf("http://%s:%d", host, config.ListenPort)
+
+	httpsModeClass := "badge--danger"
+	httpsModeLabel := "Disabled"
+	httpsModeDetails := "HTTPS requests are blocked by configuration."
+	if config.HTTPS.Intercept {
+		httpsModeClass = "badge--warn"
+		httpsModeLabel = "Interception enabled"
+		httpsModeDetails = "HTTPS traffic is decrypted on the proxy so encrypted repositories can be cached."
+	} else if !config.HTTPS.Prevent {
+		httpsModeClass = "badge--good"
+		httpsModeLabel = "Tunnel mode"
+		httpsModeDetails = "HTTPS traffic is forwarded end-to-end without decryption."
+	}
+
+	var builder strings.Builder
+
+	builder.WriteString(`<section class="hero stack-md">
+		<p class="eyebrow">Service Overview</p>
+		<h2>APT cache proxy control center</h2>
+		<p class="lead">This instance accelerates package installs by keeping frequently requested APT files on local storage and reusing them across clients.</p>
+		<div class="actions">
+			<a class="button" href="/_goaptcacher/stats">View live statistics</a>
+			<a class="button button-secondary" href="/_goaptcacher/setup">Open setup guide</a>
+		</div>
+	</section>`)
+
+	builder.WriteString(`<section class="grid">
+		<article class="panel stack-md">
+			<h3>Proxy status</h3>
+			<ul class="status-list">
+				<li><span>HTTP proxy</span><span class="badge badge--good">Enabled</span></li>
+				<li><span>HTTPS proxy</span><span class="badge ` + httpsModeClass + `">` + escapeHTML(httpsModeLabel) + `</span></li>
+			</ul>
+			<br>
+			<p class="muted">` + escapeHTML(httpsModeDetails) + `</p>
+			<dl class="detail-list">
+				<div><dt>HTTP endpoint</dt><dd><code>` + escapeHTML(httpEndpoint) + `</code></dd></div>`)
+
+	if config.HTTPS.Intercept {
+		httpsEndpoint := fmt.Sprintf("https://%s:%d", host, effectiveHTTPSPort())
+		builder.WriteString(`<div><dt>HTTPS endpoint</dt><dd><code>` + escapeHTML(httpsEndpoint) + `</code></dd></div>`)
+	}
+
+	if len(config.AlternativePorts) > 0 {
+		builder.WriteString(`<div><dt>Additional ports</dt><dd>` + renderChipList(config.AlternativePorts, "port") + `</dd></div>`)
+	} else {
+		builder.WriteString(`<div><dt>Additional ports</dt><dd class="muted">No alternative listener ports configured.</dd></div>`)
+	}
+
+	builder.WriteString(`</dl>
+		</article>
+		<article class="panel stack-md">
+			<h3>Domain policy</h3>
+			<p class="muted">Domain filtering controls which repositories are cached versus proxied without caching.</p>
+			<h4>Cached domains</h4>`)
+
+	if len(config.Domains) == 0 {
+		builder.WriteString(`<p class="muted">No allowlist set. Requests to all domains are accepted.</p>`)
+	} else {
+		builder.WriteString(renderChipList(config.Domains, "domain"))
+	}
+
+	builder.WriteString(`<h4>Passthrough domains</h4>`)
+	if len(config.PassthroughDomains) == 0 {
+		builder.WriteString(`<p class="muted">No passthrough domains configured.</p>`)
+	} else {
+		builder.WriteString(renderChipList(config.PassthroughDomains, "domain"))
+	}
+
+	builder.WriteString(`</article>
+	</section>`)
+
+	builder.WriteString(`<section class="panel stack-md">
+		<h3>Mirror routing</h3>
+		<p class="muted">Remaps and overrides are applied before cache lookup.</p>
+		<div class="grid">`)
+
+	builder.WriteString(`<article class="panel panel-inner stack-sm">
+		<h4>URL remaps</h4>`)
+	if len(config.Remap) == 0 {
+		builder.WriteString(`<p class="muted">No remap rules configured.</p>`)
+	} else {
+		builder.WriteString(`<div class="data-table-wrap"><table class="data-table data-table-compact"><thead><tr><th>From</th><th>To</th></tr></thead><tbody>`)
+		for _, remap := range config.Remap {
+			builder.WriteString(`<tr><td><code>` + escapeHTML(remap.From) + `</code></td><td><code>` + escapeHTML(remap.To) + `</code></td></tr>`)
+		}
+		builder.WriteString(`</tbody></table></div>`)
+	}
+	builder.WriteString(`</article>`)
+
+	builder.WriteString(`<article class="panel panel-inner stack-sm">
+		<h4>Distribution overrides</h4>
+		<ul class="simple-list">`)
+	if config.Overrides.UbuntuServer != "" {
+		builder.WriteString(`<li><strong>Ubuntu:</strong> <code>` + escapeHTML(config.Overrides.UbuntuServer) + `</code></li>`)
+	}
+	if config.Overrides.DebianServer != "" {
+		builder.WriteString(`<li><strong>Debian:</strong> <code>` + escapeHTML(config.Overrides.DebianServer) + `</code></li>`)
+	}
+	if config.Overrides.UbuntuServer == "" && config.Overrides.DebianServer == "" {
+		builder.WriteString(`<li class="muted">No distribution overrides configured.</li>`)
+	}
+	builder.WriteString(`</ul>
+	</article>
+	</div>
+	</section>`)
+
+	if config.HTTPS.Intercept {
+		builder.WriteString(`<section class="note note-warning">HTTPS interception is active. Clients must trust the proxy certificate chain to avoid TLS errors.<br>See the <a href="/_goaptcacher/setup">setup page</a> for instructions.</section>`)
+	}
+
+	return builder.String()
 }
 
 // httpPageStats returns the page content for the stats page containing the
@@ -217,160 +276,300 @@ func httpPageStats() string {
 		log.Printf("[ERROR:WEB] Error collecting cache usage: %s\n", err)
 	}
 
-	statsSnapshot := cache.GetStatsSnapshot(14)
+	statsSnapshot := cache.GetStatsSnapshot(statsHistoryDays)
 	totalRequests := statsSnapshot.Totals.Requests
 	totalHits := statsSnapshot.Totals.Hits
 	totalMisses := statsSnapshot.Totals.Misses
 	totalTunnel := statsSnapshot.Totals.Tunnel
 	totalTrafficDown := statsSnapshot.Totals.TrafficDown
 	totalTrafficUp := statsSnapshot.Totals.TrafficUp
+	totalTunnelTransfer := statsSnapshot.Totals.TunnelTransfer
 
-	_, _, _ = getStorageInfo()
+	hitRate := safePercent(totalHits, totalRequests)
+	missRate := safePercent(totalMisses, totalRequests)
+	tunnelShare := safePercent(totalTunnel, totalRequests)
+	upstreamShare := safePercent(totalTrafficDown, totalTrafficUp)
 
-	response := `<h2>Cache statistics</h2>
-	<p>
-		This page shows the cache statistics of this proxy server including the total number of cached files,
-		the total number of requests, hits, misses, and the total traffic served to clients and total traffic fetched from the repository upstream servers.
-		You can also see the last 14 days of traffic statistics in detail below.
-	</p>
-	<h3>Lifetime statistics</h3>
-	<p>
-		The following statistics are available since the first request made to this server which was on ` + statsSnapshot.OldestDay.Format("2006-01-02") + `.
-	<ul>`
-	response += fmt.Sprintf("<li>Total files cached: %d</li>", filesCached)
-	response += fmt.Sprintf("<li>Total size cached: %s</li>", prettifyBytes(totalSize))
-	response += fmt.Sprintf("<li>Total requests: %d</li>", totalRequests)
-	response += fmt.Sprintf("<li>Total hits: %d (%d%%)</li>", totalHits, safePercent(totalHits, totalRequests))
-	response += fmt.Sprintf("<li>Total misses: %d (%d%%)</li>", totalMisses, safePercent(totalMisses, totalRequests))
-	response += fmt.Sprintf("<li>Total tunnel requests: %d</li>", totalTunnel)
-	response += fmt.Sprintf("<li>Total traffic served to clients: %s</li>", prettifyBytes(totalTrafficUp))
-	response += fmt.Sprintf("<li>Total traffic fetched from repo servers: %s</li>", prettifyBytes(totalTrafficDown))
-	response += `</ul></p>
-	<h3>Last 14 days statistics</h3>
-	<p>
-		<table>
-			<tr>
-				<th>Date</th>
-				<th>Requests</th>
-				<th>Hits</th>
-				<th>Misses</th>
-				<th>Tunnel</th>
-				<th>Traffic served</th>
-				<th>Traffic fetched</th>
-			</tr>`
-	for _, entry := range statsSnapshot.Daily {
-		response += fmt.Sprintf(
-			"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d</td><td>%s</td><td>%s (%d%%)</td></tr>",
-			entry.Date.Format("2006-01-02"),
-			entry.Requests,
-			entry.Hits,
-			safePercent(entry.Hits, entry.Requests),
-			entry.Misses,
-			safePercent(entry.Misses, entry.Requests),
-			entry.Tunnel,
-			prettifyBytes(entry.TrafficUp),
-			prettifyBytes(entry.TrafficDown),
-			safePercent(entry.TrafficDown, entry.TrafficUp),
-		)
-
+	var estimatedSaved uint64
+	if totalTrafficUp > totalTrafficDown {
+		estimatedSaved = totalTrafficUp - totalTrafficDown
 	}
-	response += `</table></p>`
 
-	return response
+	storageTotal, storageUsed, storageErr := getStorageInfo()
+	storageUsage := uint64(0)
+	if storageErr == nil {
+		storageUsage = safePercent(storageUsed, storageTotal)
+	}
+
+	firstSeenText := "No traffic recorded yet"
+	if totalRequests > 0 {
+		firstSeenText = statsSnapshot.OldestDay.Format("2006-01-02")
+	}
+
+	var builder strings.Builder
+
+	builder.WriteString(`<section class="hero stack-md">
+		<p class="eyebrow">Statistics</p>
+		<h2>Cache and traffic analytics</h2>
+		<p class="lead">Lifetime totals start at <code>` + escapeHTML(firstSeenText) + `</code>. Daily breakdown below shows the last ` + strconv.Itoa(statsHistoryDays) + ` recorded days.</p>
+	</section>`)
+
+	builder.WriteString(`<section class="metric-grid">`)
+	builder.WriteString(renderMetricCard("Requests", strconv.FormatUint(totalRequests, 10), "All proxied requests"))
+	builder.WriteString(renderMetricCard("Cache hit rate", fmt.Sprintf("%d%%", hitRate), fmt.Sprintf("Miss rate %d%%", missRate)))
+	builder.WriteString(renderMetricCard("Cached files", strconv.FormatUint(filesCached, 10), prettifyBytes(totalSize)+" total"))
+	builder.WriteString(renderMetricCard("Traffic to clients", prettifyBytes(totalTrafficUp), "Data delivered by the proxy"))
+	builder.WriteString(renderMetricCard("Traffic from upstream", prettifyBytes(totalTrafficDown), fmt.Sprintf("%d%% of served traffic", upstreamShare)))
+	builder.WriteString(renderMetricCard("Tunnel requests", strconv.FormatUint(totalTunnel, 10), fmt.Sprintf("%d%% request share", tunnelShare)))
+	builder.WriteString(renderMetricCard("Tunnel transfer", prettifyBytes(totalTunnelTransfer), "Traffic that bypassed cache storage"))
+
+	if storageErr == nil {
+		builder.WriteString(renderMetricCard("Filesystem usage", fmt.Sprintf("%d%%", storageUsage), fmt.Sprintf("%s of %s used", prettifyBytes(storageUsed), prettifyBytes(storageTotal))))
+	} else {
+		builder.WriteString(renderMetricCard("Filesystem usage", "n/a", "Unable to read storage stats"))
+	}
+	builder.WriteString(`</section>`)
+
+	builder.WriteString(`<section class="panel stack-sm">
+		<h3>Efficiency summary</h3>
+		<p class="muted">Estimated upstream traffic saved by cache hits: <strong>` + escapeHTML(prettifyBytes(estimatedSaved)) + `</strong>.</p>
+	</section>`)
+
+	builder.WriteString(`<section class="panel stack-md">
+		<h3>Daily breakdown</h3>`)
+
+	if len(statsSnapshot.Daily) == 0 {
+		builder.WriteString(`<p class="muted">No daily entries available yet.</p>`)
+	} else {
+		builder.WriteString(`<div class="data-table-wrap"><table class="data-table">
+			<thead>
+				<tr>
+					<th>Date</th>
+					<th>Requests</th>
+					<th>Hits</th>
+					<th>Misses</th>
+					<th>Tunnel</th>
+					<th>Served traffic</th>
+					<th>Upstream traffic</th>
+				</tr>
+			</thead>
+			<tbody>`)
+		for _, entry := range statsSnapshot.Daily {
+			builder.WriteString(fmt.Sprintf(
+				"<tr><td>%s</td><td>%d</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%d (%d%%)</td><td>%s</td><td>%s (%d%%)</td></tr>",
+				entry.Date.Format("2006-01-02"),
+				entry.Requests,
+				entry.Hits,
+				safePercent(entry.Hits, entry.Requests),
+				entry.Misses,
+				safePercent(entry.Misses, entry.Requests),
+				entry.Tunnel,
+				safePercent(entry.Tunnel, entry.Requests),
+				prettifyBytes(entry.TrafficUp),
+				prettifyBytes(entry.TrafficDown),
+				safePercent(entry.TrafficDown, entry.TrafficUp),
+			))
+		}
+		builder.WriteString(`</tbody></table></div>`)
+	}
+
+	builder.WriteString(`</section>`)
+	return builder.String()
+}
+
+func httpPageCache() string {
+	filesCached, totalSize, err := cache.GetCacheUsage()
+	if err != nil {
+		log.Printf("[ERROR:WEB] Error collecting cache usage: %s\n", err)
+	}
+
+	storageTotal, storageUsed, storageErr := getStorageInfo()
+	storageUsage := uint64(0)
+	if storageErr == nil {
+		storageUsage = safePercent(storageUsed, storageTotal)
+	}
+
+	expirationText := "Automatic expiration is disabled."
+	if config.Expiration.UnusedDays > 0 {
+		expirationText = fmt.Sprintf("Unused cached files are removed after %d days.", config.Expiration.UnusedDays)
+	}
+
+	var builder strings.Builder
+	builder.WriteString(`<section class="hero stack-md">
+		<p class="eyebrow">Cache</p>
+		<h2>Storage overview</h2>
+		<p class="lead">Current cache footprint and lifecycle settings for this instance.</p>
+	</section>`)
+
+	builder.WriteString(`<section class="metric-grid">`)
+	builder.WriteString(renderMetricCard("Cached files", strconv.FormatUint(filesCached, 10), "Tracked entries on disk"))
+	builder.WriteString(renderMetricCard("Cached size", prettifyBytes(totalSize), "Total local data volume"))
+	if storageErr == nil {
+		builder.WriteString(renderMetricCard("Filesystem usage", fmt.Sprintf("%d%%", storageUsage), fmt.Sprintf("%s of %s used", prettifyBytes(storageUsed), prettifyBytes(storageTotal))))
+	} else {
+		builder.WriteString(renderMetricCard("Filesystem usage", "n/a", "Unable to read storage stats"))
+	}
+	builder.WriteString(`</section>`)
+
+	builder.WriteString(`<section class="panel stack-sm">
+		<h3>Retention policy</h3>
+		<p class="muted">` + escapeHTML(expirationText) + `</p>
+		<div class="actions">
+			<a class="button" href="/_goaptcacher/stats">Open statistics</a>
+			<a class="button button-secondary" href="/_goaptcacher/setup">Open setup guide</a>
+		</div>
+	</section>`)
+
+	return builder.String()
 }
 
 // httpPageSetup returns the page content for the setup page containing the
 // configuration of this proxy server.
 func httpPageSetup() string {
-	// Determine domain to be used for configuration directives
-	var domain string
-	if len(config.Index.Hostnames) > 0 {
-		domain = config.Index.Hostnames[0]
-	} else {
-		// Detect IP address of this server and use it as domain
-		ip, err := getLocalIP()
-		if err != nil || ip == "" {
-			log.Printf("[ERROR:WEB] Error getting local IP address: %s\n", err)
-			domain = "127.0.0.1"
-		} else {
-			domain = ip
+	domain := preferredIndexHost()
+	httpPort := strconv.Itoa(config.ListenPort)
+	httpsPort := strconv.Itoa(effectiveHTTPSPort())
+
+	httpsNote := "HTTPS requests are tunneled without interception."
+	if config.HTTPS.Intercept {
+		httpsNote = "HTTPS interception is enabled. Clients must trust the proxy CA certificate."
+	} else if config.HTTPS.Prevent {
+		httpsNote = "HTTPS proxying is disabled. Only HTTP repositories can use the proxy."
+	}
+
+	var builder strings.Builder
+	builder.WriteString(`<section class="hero stack-md">
+		<p class="eyebrow">Setup</p>
+		<h2>Connect clients to this cache</h2>
+		<p class="lead">Choose one of the configuration methods below. The static proxy directives are the simplest and most reliable option.</p>
+		<section class="note">` + escapeHTML(httpsNote) + `</section>
+	</section>`)
+
+	builder.WriteString(`<section class="grid">`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>1) Static APT proxy directives</h3>
+		<p>Add this file on each client:</p>
+		<pre><code>/etc/apt/apt.conf.d/10proxy</code></pre>
+		<pre><code>Acquire::http::Proxy "http://` + escapeHTML(domain) + `:` + escapeHTML(httpPort) + `/";
+Acquire::https::Proxy "http://` + escapeHTML(domain) + `:` + escapeHTML(httpPort) + `/";</code></pre>
+		<p class="muted">
+			Works for managed servers, VMs and persistent hosts. Configuration is static and not suitable for mobile clients.<br>
+			Best used with Ansible, Puppet, Chef or similar configuration management tools.
+		</p>
+	</article>`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>2) Auto-discovery with auto-apt-proxy</h3>
+		<p>Install discovery helper on clients:</p>
+		<pre><code>apt install auto-apt-proxy</code></pre>
+		<p>Create an SRV record for your internal domain:</p>
+		<pre><code>_apt_proxy._tcp.example.com. 3600 IN SRV 0 0 ` + escapeHTML(httpPort) + ` ` + escapeHTML(domain) + `.</code></pre>
+		<p class="muted">
+			Useful for ephemeral workers, CI runners and laptops switching networks.<br>
+			<strong>Note:</strong> auto-apt-proxy uses the domain name of your hosts FQDN to discover the proxy and DNS-Suffix.
+		</p>
+	</article>`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>3) Per-repository DNS SRV override</h3>
+		<p>Use this when you want DNS to steer repository traffic to the proxy without host-level apt.conf changes.</p>
+		<pre><code>_http._tcp.at.archive.ubuntu.com. 3600 IN SRV 0 0 ` + escapeHTML(httpPort) + ` ` + escapeHTML(domain) + `.
+_https._tcp.download.docker.com. 3600 IN SRV 0 0 ` + escapeHTML(httpsPort) + ` ` + escapeHTML(domain) + `.</code></pre>
+		<p class="muted">Add records for every repository domain that should pass through the proxy.</p>
+	</article>`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>4) GitLab CI integration</h3>
+		<p>Add the following lines to your .gitlab-ci.yml to enable the proxy for CI jobs:</p>
+		<pre><code>  before_script:
+    - echo 'Acquire::http::Proxy "http://` + escapeHTML(domain) + `:` + escapeHTML(httpPort) + `/";' > /etc/apt/apt.conf.d/10proxy
+    - echo 'Acquire::https::Proxy "http://` + escapeHTML(domain) + `:` + escapeHTML(httpPort) + `/";' >> /etc/apt/apt.conf.d/10proxy
+</code></pre>
+		<p class="muted">Works for ephemeral CI runners without static configuration. Not suitable for general client use.</p>
+	</article>`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>Validation checklist</h3>
+		<ul class="simple-list">
+			<li>Verify APT proxy settings with <code>apt-config dump | grep -E 'Acquire::(http|https)::Proxy'</code>.</li>
+			<li>Run <code>apt update</code> and then check <a href="/_goaptcacher/stats">statistics</a> for incoming requests.</li>
+			<li>If HTTPS interception is enabled, deploy the CA certificate to all clients.</li>
+		</ul>
+	</article>`)
+
+	builder.WriteString(`<article class="panel stack-md">
+		<h3>Troubleshooting</h3>
+		<ul class="simple-list">
+			<li>Check the <a href="/_goaptcacher/stats">statistics</a> page for incoming requests and cache performance.</li>
+			<li>Inspect proxy logs for errors or misconfigurations.</li>
+			<li>Ensure clients can resolve the proxy hostname and connect to the specified ports.</li>
+			<li>If using HTTPS interception, verify that clients trust the proxy CA certificate.</li>
+			<li>Review domain filtering and remap rules if certain repositories are not being cached as expected.</li>
+		</ul>
+	</article>`)
+
+	builder.WriteString(`</section>`)
+	return builder.String()
+}
+
+func renderMetricCard(label string, value string, hint string) string {
+	return `<article class="metric-card">
+		<p class="metric-label">` + escapeHTML(label) + `</p>
+		<p class="metric-value">` + escapeHTML(value) + `</p>
+		<p class="metric-hint">` + escapeHTML(hint) + `</p>
+	</article>`
+}
+
+func renderChipList(values any, valuePrefix string) string {
+	var builder strings.Builder
+	builder.WriteString(`<ul class="chip-list">`)
+
+	switch v := values.(type) {
+	case []string:
+		for _, value := range v {
+			builder.WriteString(`<li class="chip"><code>` + escapeHTML(value) + `</code></li>`)
+		}
+	case []int:
+		for _, value := range v {
+			builder.WriteString(`<li class="chip"><code>` + escapeHTML(valuePrefix+" "+strconv.Itoa(value)) + `</code></li>`)
 		}
 	}
 
-	httpPort := strconv.Itoa(config.ListenPort)
-	httpsPort := strconv.Itoa(config.ListenPortSecure)
+	builder.WriteString(`</ul>`)
+	return builder.String()
+}
 
-	var response string
-	response += `<h2>Setup</h2>`
-	response += `<p>
-		This page shows the configuration of this proxy server. You can use this information to configure your APT client to use this proxy server.<br>
-		For configuration, there are multiple options available. Please choose the one that fits your needs.<br>
-	</p>`
+func escapeHTML(value string) string {
+	return html.EscapeString(value)
+}
 
-	// Configuration: Proxy Servers (HTTP and HTTPS) using static configuration
-	response += `<h3>APT Proxy Directives</h3>`
-	response += `<p>
-		To use this proxy server with APT, you need to add the following lines to your APT configuration file (usually located at <code>/etc/apt/apt.conf.d/10proxy.conf</code>):<br>
-		<pre>
-Acquire::http::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
-Acquire::https::Proxy "http://<span style="color: #ff0000;">` + domain + `:` + httpPort + `</span>";
-		</pre>
-	</p>`
+func preferredIndexHost() string {
+	if len(config.Index.Hostnames) > 0 {
+		host := strings.TrimSpace(config.Index.Hostnames[0])
+		if host != "" {
+			return host
+		}
+	}
 
-	// Configuration: APT Proxy Server Discovery
-	response += `<h3>APT Proxy Discovery</h3>`
-	response += `<p>
-		To use this proxy server with APT, you can also use the APT proxy discovery feature. This feature allows you to configure the proxy server once and let the APT client discover the proxy server automatically.<br>
-		To use this feature, you need to install the auto-apt-proxy package using <code>apt install <strong>auto-apt-proxy</strong></code> on your system.<br>
-		<br>
-		Assuming your internal domain is <strong>example.com</strong>, add the follwing DNS SRV record to your DNS server:<br>
-		<pre>
-_apt_proxy._tcp.<span style="color: #ff0000;">example.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `.</span>
-		</pre>
+	ip, err := getLocalIP()
+	if err != nil {
+		log.Printf("[ERROR:WEB] Error getting local IP address: %s\n", err)
+		return "127.0.0.1"
+	}
+	if ip == "" {
+		return "127.0.0.1"
+	}
 
-		You can verify if auto-apt-proxy is detecting the proxy server by running <code>auto-apt-proxy</code> on your system which should output the proxy server URL (e.g. <code>http://` + domain + `:` + httpPort + `</code>).<br>
-		<br>
-		Alternatively, you can also create an A or AAAA DNS record for <code><strong>apt-proxy</strong></code> or <code><strong>apt-proxy.example.com</strong></code> pointing to the IP address of this proxy server.<br>
-		<br>
-		With this configuration, <code>auto-apt-proxy</code> will automatically try to connect to
-		<code>http://apt-proxy:3142/</code> or <code>http://apt-proxy.example.com:3142/</code>
-		(based on the clients DNS-Suffix) by default. Ensure that GoAPTCacher also listens on TCP
-		port 3142 to support this fallback.<br>
-		<br>
-		<strong>Important note:</strong> <code>auto-apt-proxy</code> only applies the proxy settings for HTTP connections. HTTPS connections will not use the proxy server unless you manually configure the HTTPS proxy as well (see above).
-	</p>
-	`
+	return ip
+}
 
-	// Configuration: DNS SRV Record Override
-	response += `<h3>DNS SRV Override</h3>`
-	response += `<p>
-		To use this proxy server with APT, you can also use the DNS SRV record override feature. This feature allows you to override the destination of the APT requests by using a DNS SRV record.<br>
-		If the client does not support SRV record lookups, it will fall back to the default DNS resolution.<br>
-		<br>
-		For this feature to work, you need to configure your local DNS server to return the following SRV record for <strong>every single domain</strong> you want to use with this proxy server:<br>
-		<pre>
-_http._tcp.<span style="color: #ff0000;">at.archive.ubuntu.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;">` + httpPort + ` ` + domain + `.</span>
-		</pre>
+func effectiveHTTPSPort() int {
+	if config.ListenPortSecure > 0 {
+		return config.ListenPortSecure
+	}
 
-		For HTTPS destinations like <strong>download.docker.com</strong>, you can use the following SRV record:<br>
-		<pre>
-<strong>_https</strong>._tcp.<span style="color: #ff0000;">download.docker.com</span>. 3600 IN SRV 0 0 <span style="color: #ff0000;"><strong>` + httpsPort + `</strong> ` + domain + `.</span>
-		</pre>
-	</p>
-	`
-
-	// Recommendations
-	response += `<h2>Recommendations</h2>`
-	response += `<p>
-		If all your clients are <strong>centrally managed</strong>, trusting the proxy server's CA certificate and always connected to the proxy server use the "APT Proxy Directives" method.<br>
-		<br>
-		When using <strong>GitLab CI/CD runners</strong>, clients with
-		<strong>Windows Subsystem for Linux</strong> or other <strong>ephemeral systems</strong>,
-		using the "APT Proxy Discovery" and "DNS SRV Override" method is recommended to avoid
-		issues with changing IP addresses, DNS names or moving between networks.
-	</p>`
-
-	return response
+	return 8091
 }
 
 // prettifyBytes is a helper function that returns a human-readable string of

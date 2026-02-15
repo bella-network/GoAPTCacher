@@ -3,7 +3,7 @@ package web
 
 import (
 	_ "embed"
-	"text/template"
+	"html/template"
 )
 
 //go:embed web/index.html

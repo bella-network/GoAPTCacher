@@ -8,26 +8,39 @@
 
 	<title>{{ .Title }}</title>
 	<link rel="stylesheet" href="/_goaptcacher/style.css">
-	<link rel="icon" href="/favicon.ico">
+	<link rel="icon" href="/_goaptcacher/favicon.ico">
 
 	<meta name="robots" content="noindex,nofollow">
 </head>
 <body>
-	<div class="container">
-		<header>
-			<h1>
-				<a href="/_goaptcacher/">{{ .Title }}</a>
-			</h1>
+	<div class="page-shell">
+		<div class="glow glow-a" aria-hidden="true"></div>
+		<div class="glow glow-b" aria-hidden="true"></div>
+
+		<header class="site-header">
+			<div class="brand-row">
+				<h1><a class="brand-link" href="/_goaptcacher/">GoAPTCacher</a></h1>
+				<span class="version-pill">v{{ .Const.Version }}</span>
+			</div>
+			<p class="site-subtitle">Pull-through APT cache for Debian and Ubuntu repositories</p>
+			<nav class="site-nav" aria-label="Primary navigation">
+				<a class="nav-link {{if eq .Active "index"}}active{{end}}" href="/_goaptcacher/">Overview</a>
+				<a class="nav-link {{if eq .Active "setup"}}active{{end}}" href="/_goaptcacher/setup">Setup</a>
+				<a class="nav-link {{if eq .Active "stats"}}active{{end}}" href="/_goaptcacher/stats">Stats</a>
+			</nav>
 		</header>
-		<main>
+
+		<main class="site-main">
 			{{ .Content }}
 		</main>
-		<footer>
-			<a href="/_goaptcacher/">Start</a> &ndash;
-			<a href="/_goaptcacher/setup">Setup</a> &ndash;
-			<a href="/_goaptcacher/stats">Stats</a> &ndash;
-			<a href="https://gitlab.com/bella.network/goaptcacher" target="_blank">GoAPTCacher/{{ .Const.Version }}</a> &ndash;
-			Made by <a href="https://bella.network/?utm_source=goaptcacher" target="_blank">Thomas Bella</a>
+
+		<footer class="site-footer stack-sm">
+			{{if .Const.Contact}}
+			<div class="footer-contact">{{ .Const.Contact }}</div>
+			{{end}}
+			<p class="footer-meta">
+				<a href="https://gitlab.com/bella.network/goaptcacher" target="_blank" rel="noopener noreferrer">GoAPTCacher {{ .Const.Version }}</a> · Built by <a href="https://thomas.bella.network/en/?utm_source=goaptcacher" target="_blank" rel="noopener noreferrer">Thomas Bella</a> · {{ .Const.Year }} · Made with <span class="heart" aria-label="love">♥</span> in Austria
+			</p>
 		</footer>
 	</div>
 </body>
