@@ -133,15 +133,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		} else {
 			handleCONNECT(w, r)
 		}
-	case http.MethodGet:
-		// If passthrough is enabled or no domains are configured, forward the
-		// request to the target host without any caching or interception.
-		if passthrough || loadedDomains == 0 {
-			handleTUNNEL(w, r)
-		} else {
-			handleHTTP(w, r)
-		}
-	case http.MethodHead:
+	case http.MethodGet, http.MethodHead:
 		// If passthrough is enabled or no domains are configured, forward the
 		// request to the target host without any caching or interception.
 		if passthrough || loadedDomains == 0 {
