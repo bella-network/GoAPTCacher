@@ -39,6 +39,8 @@ systemctl daemon-reload || :
 
 if [ "$1" = "remove" ] ; then
   rm -f /lib/systemd/system/goaptcacher.service
+  rm -f /lib/systemd/system/goaptcacher-repoverify.service
+  rm -f /lib/systemd/system/goaptcacher-repoverify.timer
 fi
 
 if [ "$1" = "purge" ] ; then

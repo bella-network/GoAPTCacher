@@ -1,0 +1,15 @@
+[Unit]
+Description=Verify cached repository checksums for GoAPTCacher
+Documentation=https://gitlab.com/bella.network/goaptcacher
+ConditionPathExists=/etc/goaptcacher/config.yaml
+
+[Service]
+Type=oneshot
+Environment="CONFIG=/etc/goaptcacher/config.yaml"
+ExecStart=/usr/bin/goaptcacher verify-repos
+WorkingDirectory=/etc/goaptcacher
+User=goaptcacher
+Group=goaptcacher
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

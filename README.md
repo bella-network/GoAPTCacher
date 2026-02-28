@@ -53,6 +53,8 @@ sudo apt install goaptcacher
 
 After installation, you can access the web interface at `http://<cache-host>:8090/_goaptcacher/` or `https://<cache-host>:8091/_goaptcacher/` to view cache statistics and configuration details.
 
+The Debian/Ubuntu package also installs and enables `goaptcacher-repoverify.timer`. This `systemd` timer periodically verifies cached repository metadata and package files below `cache_directory`.
+
 ### Build from source 🛠️
 
 You can also build GoAPTCacher from source. Make sure you have Go installed (latest version recommended). Then run:
@@ -196,11 +198,50 @@ Command line:
 - `-h`, `--help` show help
 - `-v`, `--version` show version/build info
 - `-c`, `--config <path>` config file path
+- `verify-repos` scan cached repositories and verify their metadata and package checksums
 
 Environment variables:
 
 - `CONFIG` config file path (used when `-c` is not set)
 - `CACHE_DIR` overrides `cache_directory`
+
+## Repository verification 🔍
+
+GoAPTCacher can verify all cached repositories by scanning `cache_directory` for `dists/<distribution>/InRelease` files and then validating repository index files plus referenced `.deb` files. For each file, the strongest supported checksum from the repository metadata is used (`SHA512` preferred, `SHA256` fallback).
+
+Manual execution:
+
+```bash
+goaptcacher verify-repos
+```
+
+When installed from the Debian/Ubuntu package, the following `systemd` units are added automatically:
+
+- `goaptcacher-repoverify.service`
+- `goaptcacher-repoverify.timer`
+
+The timer runs once about 15 minutes after boot and then roughly every 24 hours with a randomized delay. It is enabled automatically on install and disabled automatically on package removal.
+
+Useful administration commands:
+
+```bash
+sudo systemctl status goaptcacher-repoverify.timer
+sudo systemctl list-timers goaptcacher-repoverify.timer
+sudo systemctl start goaptcacher-repoverify.service
+sudo journalctl -u goaptcacher-repoverify.service
+```
+
+Disable periodic verification manually:
+
+```bash
+sudo systemctl disable --now goaptcacher-repoverify.timer
+```
+
+Re-enable it:
+
+```bash
+sudo systemctl enable --now goaptcacher-repoverify.timer
+```
 
 ## Auto-discovery notes 📡
 

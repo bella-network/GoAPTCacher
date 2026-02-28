@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic repository checksum verification for GoAPTCacher
+
+[Timer]
+Unit=goaptcacher-repoverify.service
+OnBootSec=15min
+OnUnitActiveSec=24h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

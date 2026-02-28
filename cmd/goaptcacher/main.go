@@ -21,13 +21,15 @@ func printHelp() {
 	fmt.Println("goaptcacher - APT caching proxy")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  goaptcacher [options]")
+	fmt.Println("  goaptcacher [options] [command]")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  -v, --version        Print version and exit")
 	fmt.Println("  -h, --help           Show this help message and exit")
 	fmt.Println("  -c, --config <file>  Path to config file (default: ./config.yaml)")
-	// Hier können weitere Optionen ergänzt werden
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  verify-repos         Verify cached repository metadata and package checksums")
 }
 
 func main() {
@@ -83,6 +85,23 @@ func main() {
 
 	// Initialize debug logging and pprof snapshotting (if enabled).
 	initDebug()
+
+	command := ""
+	if args := flag.Args(); len(args) > 0 {
+		command = args[0]
+	}
+
+	switch command {
+	case "":
+		// default server mode
+	case "verify-repos":
+		if err := runVerifyRepositories(config.CacheDirectory); err != nil {
+			log.Fatal("[DEBREPOCLEANER-ERROR] ", err)
+		}
+		return
+	default:
+		log.Fatalf("Unknown command: %s", command)
+	}
 
 	// If no domains and passthrough domains are configured, log a warning that
 	// all requests will be allowed.
