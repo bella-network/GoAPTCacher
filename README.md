@@ -72,7 +72,7 @@ docker run -d --name goaptcacher \
   -p 8090:8090 \
   -p 8091:8091 \
   -p 3142:3142 \
-  -v "$PWD/config.yaml":/etc/goaptcacher.yaml:ro \
+  -v "$PWD/config.yaml":/etc/goaptcacher/config.yaml:ro \
   -v "$PWD/cache":/var/cache/goaptcacher \
   registry.gitlab.com/bella.network/goaptcacher:latest
 ```
@@ -81,7 +81,7 @@ docker run -d --name goaptcacher \
 
 This program is a pull-through apt cacher similar to apt-cacher-ng and squid with local file cache. It is designed to be used in isolated environments and CI/CD pipelines to speed up package downloads and reduce the load on the package mirrors. It caches only the packages that were requested by clients and stores them in a local directory to avoid re-downloading. It serves packages over HTTP and HTTPS and supports on-the-fly certificate generation. It also supports multiple package mirrors, HTTPS-passthrough, proxy support, SRV record support, and URL rewriting. It provides a web interface to view cache statistics and configuration details.
 
-## What this progran not does
+## What this program does not do
 
 This program does not cache all packages from a package mirror, only the packages that were requested by clients. It does not cache packages that are not requested by clients, there is no pre-caching of packages.
 
@@ -95,7 +95,7 @@ That's why I created an alternative with this program that is more in line with 
 
 The configuration file is structured in YAML format and contains the following example configuration. This is a sample configuration file with explanations for each section.
 
-1. 📝 Create config (example: `/etc/goaptcacher.yaml`):
+1. 📝 Create config (example: `/etc/goaptcacher/config.yaml`):
 
 ```yaml
 cache_directory: "/var/cache/goaptcacher"
