@@ -46,14 +46,14 @@ passthrough_domains:
 # HTTPS interception settings (if enabled, requires cert/key) and allows to intercept HTTPS traffic to cache packages that are served over HTTPS.
 https:
   prevent: false # Prevent HTTPS requests from being cached and proxied
-  intercept: true # Enable HTTPS interception (set to false to run in pure proxy/tunnel mode)
+  intercept: false # Enable HTTPS interception (set to false to run in pure proxy/tunnel mode)
 
-  cert: "public.key" # Path to the Public Key File (PEM format) of the Intermediate CA which will issue leaf certificates on-the-fly
-  key: "private.key" # Path to the Private Key File (PEM format) of the Intermediate CA
-  password: "mysecret" # Optional password for encrypted key files
-  certificate_domain: "cache.example.com" # The domain name that will be used in the generated leaf certificates (must match the SAN of the cert)
-  aia_address: "http://cache.example.com/goaptcacher.crt" # Authority Information Access (AIA) URL to include in leaf certs for clients to download the CA cert
-  enable_crl: false # Enable CRL generation and serving (allows clients to check for revoked certs)
+# cert: "public.key" # Path to the Public Key File (PEM format) of the Intermediate CA which will issue leaf certificates on-the-fly
+# key: "private.key" # Path to the Private Key File (PEM format) of the Intermediate CA
+# password: "mysecret" # Optional password for encrypted key files
+# certificate_domain: "cache.example.com" # The domain name that will be used in the generated leaf certificates (must match the SAN of the cert)
+# aia_address: "http://cache.example.com/goaptcacher.crt" # Authority Information Access (AIA) URL to include in leaf certs for clients to download the CA cert
+# enable_crl: false # Enable CRL generation and serving (allows clients to check for revoked certs)
 
 
 # Overrides specific distributions to use a different default mirror than the official one.
