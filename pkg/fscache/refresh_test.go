@@ -126,6 +126,81 @@ func TestRefreshFileStoresLastModifiedWithoutPreviousRemoteTime(t *testing.T) {
 	}
 }
 
+func TestCacheRefreshRefreshesConnectedFilesAtCachePath(t *testing.T) {
+	const (
+		oldRelease  = "old release"
+		newRelease  = "new release"
+		oldPackages = "old packages"
+		newPackages = "new packages"
+	)
+
+	cache := newTestFSCache(t)
+	cache.client = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body := newRelease
+			if r.URL.Path == "/debian/dists/stable/main/binary-amd64/Packages.gz" {
+				body = newPackages
+			}
+
+			headers := http.Header{}
+			headers.Set("ETag", "\"new-"+filepath.Base(r.URL.Path)+"\"")
+			headers.Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        headers,
+				Body:          io.NopCloser(strings.NewReader(body)),
+				ContentLength: int64(len(body)),
+				Request:       r,
+			}, nil
+		}),
+	}
+
+	releaseURL := mustParseURL(t, "http://mirror.example/debian/dists/stable/InRelease")
+	packagesURL := mustParseURL(t, "http://mirror.example/debian/dists/stable/main/binary-amd64/Packages.gz")
+	releasePath := cache.buildLocalPath(releaseURL)
+	packagesPath := cache.buildLocalPath(packagesURL)
+	for _, path := range []string{releasePath, packagesPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("failed to create cache directory: %v", err)
+		}
+	}
+	if err := os.WriteFile(releasePath, []byte(oldRelease), 0o644); err != nil {
+		t.Fatalf("failed to write old release: %v", err)
+	}
+	if err := os.WriteFile(packagesPath, []byte(oldPackages), 0o644); err != nil {
+		t.Fatalf("failed to write old packages: %v", err)
+	}
+
+	protocol := DetermineProtocolFromURL(releaseURL)
+	releaseEntry := AccessEntry{
+		LastChecked: time.Now().Add(-10 * time.Minute),
+		ETag:        "\"old-release\"",
+		URL:         releaseURL,
+		Size:        int64(len(oldRelease)),
+	}
+	if err := cache.Set(protocol, releaseURL.Host, releaseURL.Path, releaseEntry); err != nil {
+		t.Fatalf("failed to seed release entry: %v", err)
+	}
+	if err := cache.Set(protocol, packagesURL.Host, packagesURL.Path, AccessEntry{
+		LastChecked: time.Now().Add(-10 * time.Minute),
+		ETag:        "\"old-packages\"",
+		URL:         packagesURL,
+		Size:        int64(len(oldPackages)),
+	}); err != nil {
+		t.Fatalf("failed to seed packages entry: %v", err)
+	}
+
+	cache.cacheRefresh(releaseURL, releaseEntry)
+
+	data, err := os.ReadFile(packagesPath)
+	if err != nil {
+		t.Fatalf("failed reading packages cache file: %v", err)
+	}
+	if string(data) != newPackages {
+		t.Fatalf("packages cache = %q, want %q", string(data), newPackages)
+	}
+}
+
 func TestRefreshFileNotModifiedUpdatesLastChecked(t *testing.T) {
 	cache := newTestFSCache(t)
 	cache.client = &http.Client{

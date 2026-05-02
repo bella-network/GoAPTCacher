@@ -73,6 +73,8 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 			return
 		}
 
+		c.refreshStaleMetadataBeforeServe(protocol, r.URL, lastAccess)
+
 		// Serve the file
 		c.serveLocalFile(w, r, localPath)
 
@@ -84,6 +86,24 @@ func (c *FSCache) serveGETRequest(r *http.Request, w http.ResponseWriter) {
 
 	// Cache was missed, download the file from the internet and serve it to the client.
 	c.serveGETRequestCacheMiss(r, w, 0)
+}
+
+// refreshStaleMetadataBeforeServe checks if the metadata of a cached file is
+// stale and refreshes it before serving the file to the client.
+func (c *FSCache) refreshStaleMetadataBeforeServe(protocol int, requestURL *url.URL, lastAccess AccessEntry) {
+	if !isRepositoryMetadataPath(requestURL.Path) || !c.evaluateRefresh(requestURL, lastAccess) {
+		return
+	}
+
+	if !c.CreateExclusiveWriteLock(protocol, requestURL.Host, requestURL.Path) {
+		log.Printf("[INFO:GET:REFRESH:SKIP] %s%s is already being used\n", requestURL.Host, requestURL.Path)
+		return
+	}
+	defer c.DeleteWriteLock(protocol, requestURL.Host, requestURL.Path)
+
+	if _, err := c.refreshFile(c.buildLocalPath(requestURL), requestURL, lastAccess); err != nil {
+		log.Printf("[WARN:GET:REFRESH] %s%s refresh before serve failed: %v\n", requestURL.Host, requestURL.Path, err)
+	}
 }
 
 // serveLocalFile serves a local file to the client.

@@ -157,6 +157,60 @@ func TestServeGETRequestStaleEntryTriggersMissAndCleanup(t *testing.T) {
 	}
 }
 
+func TestServeGETRequestRefreshesStaleMetadataBeforeServing(t *testing.T) {
+	const (
+		oldPayload = "old packages"
+		newPayload = "new packages with changed size"
+	)
+
+	lastModified := time.Now().UTC().Truncate(time.Second)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("ETag", "\"new-etag\"")
+		w.Header().Set("Last-Modified", lastModified.Format(http.TimeFormat))
+		_, _ = io.WriteString(w, newPayload)
+	}))
+	defer upstream.Close()
+
+	cache := newTestFSCache(t)
+	req := httptest.NewRequest(http.MethodGet, upstream.URL+"/dists/stable/main/binary-amd64/Packages.gz", nil)
+	localPath := cache.buildLocalPath(req.URL)
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(localPath, []byte(oldPayload), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	protocol := DetermineProtocolFromURL(req.URL)
+	if err := cache.Set(protocol, req.URL.Host, req.URL.Path, AccessEntry{
+		RemoteLastModified: lastModified.Add(-time.Hour),
+		LastChecked:        time.Now().Add(-10 * time.Minute),
+		ETag:               "\"old-etag\"",
+		URL:                req.URL,
+		Size:               int64(len(oldPayload)),
+	}); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	cache.serveGETRequest(req, rr)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := rr.Body.String(); got != newPayload {
+		t.Fatalf("body = %q, want %q", got, newPayload)
+	}
+
+	entry, ok := cache.Get(protocol, req.URL.Host, req.URL.Path)
+	if !ok {
+		t.Fatalf("expected metadata entry")
+	}
+	if entry.Size != int64(len(newPayload)) {
+		t.Fatalf("entry size = %d, want %d", entry.Size, len(newPayload))
+	}
+}
+
 func TestServeGETRequestMissFetchError(t *testing.T) {
 	cache := newTestFSCache(t)
 	cache.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {

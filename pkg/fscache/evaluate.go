@@ -61,6 +61,16 @@ var ConnectedFiles = map[string][]string{
 	"Release.gpg": {"Release", "InRelease"},
 }
 
+// isRepositoryMetadataPath checks if the path is a repository metadata file
+// that should be considered for refreshes.
+func isRepositoryMetadataPath(path string) bool {
+	if !strings.Contains(path, "/dists/") {
+		return false
+	}
+
+	return slices.Contains(RefreshFiles, filepath.Base(path))
+}
+
 // evaluateRefresh checks if the file should be refreshed.
 func (c *FSCache) evaluateRefresh(localFile *url.URL, lastAccess AccessEntry) bool {
 	// From localFile, get the filename only without the path
@@ -138,7 +148,7 @@ func (c *FSCache) cacheRefresh(localFile *url.URL, lastAccess AccessEntry) {
 			}
 
 			// Refresh the connected file
-			_, err := c.refreshFile(file, connectedFile, connectedLastAccess)
+			_, err := c.refreshFile(c.buildLocalPath(connectedFile), connectedFile, connectedLastAccess)
 			if err != nil {
 				log.Printf("[ERROR:REFRESH] %s\n", err)
 			}
