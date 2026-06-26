@@ -59,6 +59,8 @@ func handleIndexRequests(w http.ResponseWriter, r *http.Request) {
 		httpServeSubpage(w, "stats")
 	case "/setup":
 		httpServeSubpage(w, "setup")
+	case "/api/stats":
+		httpServeAPIStats(w, r)
 	case "/revocation.crl":
 		httpServeCRL(w, r)
 	case "/goaptcacher.crt":
@@ -511,6 +513,20 @@ _https._tcp.download.docker.com. 3600 IN SRV 0 0 ` + escapeHTML(httpsPort) + ` `
 
 	builder.WriteString(`</section>`)
 	return builder.String()
+}
+
+func httpServeAPIStats(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	statsSnapshot := cache.GetStatsSnapshot(statsHistoryDays)
+
+	jsonData, err := statsSnapshot.ToJSON()
+	if err != nil {
+		http.Error(w, "Error generating JSON", http.StatusInternalServerError)
+		return
+	}
+
+	_, _ = w.Write(jsonData)
 }
 
 func renderMetricCard(label string, value string, hint string) string {

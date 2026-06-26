@@ -57,6 +57,38 @@ type StatsSnapshot struct {
 	OldestDay time.Time
 }
 
+func (s StatsSnapshot) ToJSON() ([]byte, error) {
+	daily := make([]any, len(s.Daily))
+	for i, day := range s.Daily {
+		daily[i] = map[string]any{
+			"date":            day.Date.Format("2006-01-02"),
+			"requests":        day.Requests,
+			"hits":            day.Hits,
+			"misses":          day.Misses,
+			"tunnel":          day.Tunnel,
+			"traffic_down":    day.TrafficDown,
+			"traffic_up":      day.TrafficUp,
+			"tunnel_transfer": day.TunnelTransfer,
+		}
+	}
+
+	data := map[string]any{
+		"totals": map[string]any{
+			"requests":        s.Totals.Requests,
+			"hits":            s.Totals.Hits,
+			"misses":          s.Totals.Misses,
+			"tunnel":          s.Totals.Tunnel,
+			"traffic_down":    s.Totals.TrafficDown,
+			"traffic_up":      s.Totals.TrafficUp,
+			"tunnel_transfer": s.Totals.TunnelTransfer,
+		},
+		"daily":      daily,
+		"oldest_day": s.OldestDay.Format("2006-01-02"),
+	}
+
+	return json.Marshal(data)
+}
+
 func (c *FSCache) statsFilePath() string {
 	return filepath.Join(c.CachePath, statsFileName)
 }
