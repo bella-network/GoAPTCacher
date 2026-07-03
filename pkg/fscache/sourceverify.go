@@ -319,10 +319,10 @@ func fetchPackagesIndex(client *http.Client, u string) (map[string]string, error
 
 	}
 
-	return parsePackages(reader), nil
+	return parsePackages(reader)
 }
 
-func parsePackages(r io.Reader) map[string]string {
+func parsePackages(r io.Reader) (map[string]string, error) {
 	pkgSums := make(map[string]string)
 	scanner := bufio.NewScanner(r)
 	var filename, sha string
@@ -340,8 +340,11 @@ func parsePackages(r io.Reader) map[string]string {
 			sha = ""
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 	if filename != "" && sha != "" {
 		pkgSums[filename] = sha
 	}
-	return pkgSums
+	return pkgSums, nil
 }

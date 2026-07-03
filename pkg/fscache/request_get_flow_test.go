@@ -12,6 +12,41 @@ import (
 	"time"
 )
 
+type failingClientWriter struct {
+	header    http.Header
+	maxBytes  int
+	written   int
+	statusSet int
+}
+
+func (f *failingClientWriter) Header() http.Header {
+	if f.header == nil {
+		f.header = make(http.Header)
+	}
+	return f.header
+}
+
+func (f *failingClientWriter) Write(p []byte) (int, error) {
+	if f.written >= f.maxBytes {
+		return 0, errors.New("client disconnected")
+	}
+
+	remaining := f.maxBytes - f.written
+	if len(p) > remaining {
+		f.written += remaining
+		return remaining, errors.New("client disconnected")
+	}
+
+	f.written += len(p)
+	return len(p), nil
+}
+
+func (f *failingClientWriter) WriteHeader(statusCode int) {
+	f.statusSet = statusCode
+}
+
+func (f *failingClientWriter) Flush() {}
+
 func TestServeLocalFileSuccess(t *testing.T) {
 	cache := newTestFSCache(t)
 	req := httptest.NewRequest(http.MethodGet, "https://example.com/pool/main/p/pkg.deb", nil)
@@ -404,5 +439,41 @@ func TestServeGETRequestCacheMissUpstreamStatusError(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Error fetching file") {
 		t.Fatalf("unexpected body: %q", rr.Body.String())
+	}
+}
+
+func TestServeGETRequestCacheMissClientDisconnectDoesNotPersistPartialFile(t *testing.T) {
+	payload := strings.Repeat("abcd", 4096)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "16384")
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer upstream.Close()
+
+	cache := newTestFSCache(t)
+	req := httptest.NewRequest(http.MethodGet, upstream.URL+"/debian/pool/main/p/pkg.deb", nil)
+
+	writer := &failingClientWriter{maxBytes: 2048}
+	cache.serveGETRequestCacheMiss(req, writer, 0)
+
+	if writer.statusSet != http.StatusOK {
+		t.Fatalf("status = %d, want %d", writer.statusSet, http.StatusOK)
+	}
+
+	targetPath := cache.buildLocalPath(req.URL)
+	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no final cache file after client disconnect, stat err = %v", err)
+	}
+
+	partials, err := filepath.Glob(targetPath + ".*.partial")
+	if err != nil {
+		t.Fatalf("Glob() error = %v", err)
+	}
+	if len(partials) != 0 {
+		t.Fatalf("expected no partial files left behind, got %d", len(partials))
+	}
+
+	if _, ok := cache.Get(DetermineProtocolFromURL(req.URL), req.URL.Host, req.URL.Path); ok {
+		t.Fatalf("expected no cache metadata after client disconnect")
 	}
 }
