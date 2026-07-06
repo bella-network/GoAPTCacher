@@ -2,8 +2,18 @@
 # postinst script
 set -e
 
+unit_exists() {
+	unit="$1"
+
+	[ -e "/lib/systemd/system/$unit" ] || [ -e "/usr/lib/systemd/system/$unit" ] || [ -e "/etc/systemd/system/$unit" ]
+}
+
 enable_unit() {
 	unit="$1"
+
+	if ! unit_exists "$unit"; then
+		return 0
+	fi
 
 	if [ -z "${2:-}" ] || deb-systemd-helper --quiet was-enabled "$unit"; then
 		deb-systemd-helper enable "$unit" >/dev/null || true
@@ -34,18 +44,17 @@ fi
 
 systemctl daemon-reload >/dev/null || true
 
-deb-systemd-helper unmask goaptcacher.service >/dev/null || true
-deb-systemd-helper unmask goaptcacher-repoverify.timer >/dev/null || true
+for unit in goaptcacher.service goaptcacher-repoverify.timer; do
+	if ! unit_exists "$unit"; then
+		continue
+	fi
 
-enable_unit goaptcacher.service "${2:-}"
-enable_unit goaptcacher-repoverify.timer "${2:-}"
+	deb-systemd-helper unmask "$unit" >/dev/null || true
+	enable_unit "$unit" "${2:-}"
 
-if deb-systemd-helper --quiet is-enabled goaptcacher.service >/dev/null; then
-	systemctl restart goaptcacher.service >/dev/null || true
-fi
-
-if deb-systemd-helper --quiet is-enabled goaptcacher-repoverify.timer >/dev/null; then
-	systemctl restart goaptcacher-repoverify.timer >/dev/null || true
-fi
+	if deb-systemd-helper --quiet is-enabled "$unit" >/dev/null; then
+		systemctl restart "$unit" >/dev/null || true
+	fi
+done
 
 exit 0

@@ -82,6 +82,10 @@ nfpms:
     contents:
       - src: source/goaptcacher.service
         dst: /lib/systemd/system/goaptcacher.service
+      - src: source/goaptcacher-repoverify.service
+        dst: /lib/systemd/system/goaptcacher-repoverify.service
+      - src: source/goaptcacher-repoverify.timer
+        dst: /lib/systemd/system/goaptcacher-repoverify.timer
       - src: config.yaml-example
         dst: /etc/goaptcacher/config.yaml
 
