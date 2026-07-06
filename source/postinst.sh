@@ -14,7 +14,7 @@ enable_unit() {
 
 case "$1" in
 	configure)
-		if ! id "goaptcacher" &>/dev/null; then
+		if ! id "goaptcacher" >/dev/null 2>&1; then
 			useradd --system --no-create-home --shell /bin/false goaptcacher
 			echo "User goaptcacher created."
 		else

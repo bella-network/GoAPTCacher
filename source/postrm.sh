@@ -21,7 +21,7 @@ set -e
 
 case "$1" in
   remove)
-    if id "goaptcacher" &>/dev/null; then
+    if id "goaptcacher" >/dev/null 2>&1; then
       userdel goaptcacher
       echo "User goaptcacher removed."
     else
