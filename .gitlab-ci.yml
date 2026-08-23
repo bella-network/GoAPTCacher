@@ -115,10 +115,13 @@ release:
     # Disable shallow cloning so that goreleaser can diff between tags to
     # generate a changelog.
     GIT_DEPTH: 0
+    GOTOOLCHAIN: auto
   before_script:
     - rm -f coverage.out gl-code-quality-report.json report.xml || true
     - rm -rf coverage || true
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - go version
+    - goreleaser --version
   script:
     - goreleaser release --clean
   artifacts:
