@@ -2,7 +2,7 @@ module gitlab.com/bella.network/goaptcacher
 
 go 1.26.3
 
-toolchain go1.26.6
+toolchain go1.27.1
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
