@@ -58,6 +58,10 @@ https:
 
 # Overrides specific distributions to use a different default mirror than the official one.
 # Useful for forcing local mirrors or faster mirrors.
+# Cache paths include the resulting mirror hostname. When changing a mirror,
+# stop GoAPTCacher and rename cache_directory/<old-host> to
+# cache_directory/<new-host> to reuse cached data. Only do this when both
+# mirrors use the same repository path layout and the target directory does not exist.
 overrides:
   ubuntu_server: "archive.ubuntu.com"
   debian_server: "archive.debian.org"
