@@ -261,6 +261,82 @@ sudo systemctl enable --now goaptcacher-repoverify.timer
 - Storage errors:
   - cache miss writes can fail when disk space is insufficient (`507`/storage errors)
 
+### Slow downloads on cache misses
+
+A cache miss cannot be delivered faster than the configured upstream mirror can
+send it to GoAPTCacher. A slow or overloaded mirror, rate limiting, or a poor
+network route to the mirror can therefore make cache misses slow even when
+cache hits, the local cache disk, and the connection between the client and
+GoAPTCacher are fast.
+
+Test the exact package URL directly on the GoAPTCacher host and discard the
+response so that local disk performance does not affect the result:
+
+```bash
+curl -4 -L -o /dev/null -sS \
+  -w 'remote=%{remote_ip} code=%{http_code} speed=%{speed_download} B/s time=%{time_total}s\n' \
+  'https://mirror.example.com/ubuntu/pool/.../package.deb'
+```
+
+Compare the same package and repository path on another mirror. If the direct
+download is already slow, GoAPTCacher is not the bottleneck. IPv4 and IPv6
+should be tested separately with `curl -4` and `curl -6` when both are
+available.
+
+Ubuntu and Debian archive requests can be directed to another mirror with the
+distribution overrides in `config.yaml`:
+
+```yaml
+overrides:
+  ubuntu_server: "fast-ubuntu-mirror.example.com"
+  debian_server: "fast-debian-mirror.example.com"
+```
+
+Use a mirror that provides the same repository path layout as the previous
+one. For example, if requests currently use `/ubuntu/...`, the replacement
+must provide the archive at that path as well. To stop forcing a distribution
+mirror and retain the mirror requested by each client, remove the corresponding
+setting or set it to an empty string. Add the replacement host to `domains` as
+well if clients request that host directly instead of reaching it through an
+override. Restart GoAPTCacher after changing the configuration.
+
+#### Reusing the cache after changing a mirror
+
+Cache paths are based on the upstream domain name:
+
+```text
+<cache_directory>/<mirror-domain>/<repository-path>
+```
+
+Consequently, changing an override from `old-mirror.example.com` to
+`new-mirror.example.com` without migrating the directory makes the existing
+files invisible under the new cache key. GoAPTCacher will otherwise download
+and build the cache for the new mirror again.
+
+Stop the service and rename the mirror directory before starting it with the
+new configuration:
+
+```bash
+sudo systemctl stop goaptcacher
+sudo mv /var/cache/goaptcacher/old-mirror.example.com \
+  /var/cache/goaptcacher/new-mirror.example.com
+sudo chown -R goaptcacher:goaptcacher \
+  /var/cache/goaptcacher/new-mirror.example.com
+sudo systemctl start goaptcacher
+```
+
+Replace `/var/cache/goaptcacher` with the effective `cache_directory` (or the
+value of the `CACHE_DIR` environment override). Domain directory names are
+lowercase and do not include a URL scheme or port.
+
+Only rename the directory when the old and new mirrors have compatible
+repository layouts and the destination directory does not already exist. If
+the destination exists, merge the directories deliberately while the service
+is stopped instead of using `mv`, and resolve duplicate paths before startup.
+If the cache contents cannot easily be replaced, create a backup before the
+migration and keep it until cache hits and repository verification have
+succeeded with the replacement mirror.
+
 ## Tested ✅
 
 This program has been tested with the following repositories and environments:
