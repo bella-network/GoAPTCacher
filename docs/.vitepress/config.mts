@@ -15,7 +15,22 @@ export default defineConfig({
     lineNumbers: true
   },
 
-  head: [["meta", { name: "theme-color", content: "#0f766e" }]],
+  head: [
+    ["meta", { name: "theme-color", content: "#0f766e" }],
+    [
+      "script",
+      {
+        async: "",
+        src: "https://pulse.bella.network/js/pa-RVupDyaohCRwnvR2wE8-a.js"
+      }
+    ],
+    [
+      "script",
+      {},
+      `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+plausible.init();`
+    ]
+  ],
 
   themeConfig: {
     siteTitle: "GoAPTCacher",
