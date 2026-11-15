@@ -2,6 +2,7 @@ package fscache
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -422,23 +423,139 @@ func TestServeGETRequestCacheMissDownloadAndCache(t *testing.T) {
 }
 
 func TestServeGETRequestCacheMissUpstreamStatusError(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = io.WriteString(w, "not found")
-	}))
-	defer upstream.Close()
+	for _, status := range []int{http.StatusNotFound, http.StatusRequestedRangeNotSatisfiable, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			body := http.StatusText(status) + "\n"
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+				w.Header().Set("Connection", "close")
+				if status == http.StatusRequestedRangeNotSatisfiable {
+					w.Header().Set("Content-Range", "bytes */16384")
+				}
+				if status == http.StatusServiceUnavailable {
+					w.Header().Set("Retry-After", "60")
+				}
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, body)
+			}))
+			defer upstream.Close()
 
-	cache := newTestFSCache(t)
-	req := httptest.NewRequest(http.MethodGet, upstream.URL+"/missing", nil)
-	rr := httptest.NewRecorder()
+			cache := newTestFSCache(t)
+			req := httptest.NewRequest(http.MethodGet, upstream.URL+"/debian/pool/main/p/pkg.deb", nil)
+			req.Header.Set("Range", "bytes=16384-")
+			rr := httptest.NewRecorder()
+			cache.serveGETRequestCacheMiss(req, rr, 0)
 
-	cache.serveGETRequestCacheMiss(req, rr, 0)
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
+			if rr.Code != status || rr.Body.String() != body {
+				t.Fatalf("response = %d %q, want %d %q", rr.Code, rr.Body.String(), status, body)
+			}
+			if got := rr.Header().Get("X-Cache"); got != "MISS" {
+				t.Fatalf("X-Cache = %q, want MISS", got)
+			}
+			if got := rr.Header().Get("Content-Length"); got != fmt.Sprint(len(body)) {
+				t.Fatalf("Content-Length = %q, want %d", got, len(body))
+			}
+			if got := rr.Header().Get("Connection"); got != "" {
+				t.Fatalf("Connection header was forwarded: %q", got)
+			}
+			if status == http.StatusRequestedRangeNotSatisfiable && rr.Header().Get("Content-Range") != "bytes */16384" {
+				t.Fatalf("Content-Range = %q", rr.Header().Get("Content-Range"))
+			}
+			if status == http.StatusServiceUnavailable && rr.Header().Get("Retry-After") != "60" {
+				t.Fatalf("Retry-After = %q", rr.Header().Get("Retry-After"))
+			}
+			if _, err := os.Stat(cache.buildLocalPath(req.URL)); !os.IsNotExist(err) {
+				t.Fatalf("expected no cached error response, stat err = %v", err)
+			}
+			if _, ok := cache.Get(DetermineProtocolFromURL(req.URL), req.URL.Host, req.URL.Path); ok {
+				t.Fatal("expected no cache metadata for error response")
+			}
+		})
 	}
-	if !strings.Contains(rr.Body.String(), "Error fetching file") {
-		t.Fatalf("unexpected body: %q", rr.Body.String())
+}
+
+func TestServeGETRequestResumeAfterClientDisconnect(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"partial response", http.StatusPartialContent},
+		{"full response after If-Range mismatch", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := strings.Repeat("abcd", 16384)
+			modified := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+			requests := make(chan http.Header, 2)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- r.Header.Clone()
+				w.Header().Set("ETag", "\"package-version\"")
+				http.ServeContent(w, r, "pkg.deb", modified, strings.NewReader(payload))
+			}))
+			defer upstream.Close()
+
+			cache := newTestFSCache(t)
+			requestURL := upstream.URL + "/debian/pool/main/p/pkg.deb"
+			first := httptest.NewRequest(http.MethodGet, requestURL, nil)
+			writer := &failingClientWriter{maxBytes: 2048}
+			cache.serveGETRequest(first, writer)
+			<-requests
+			if writer.statusSet != http.StatusOK || writer.written != 2048 {
+				t.Fatalf("interrupted response = %d, %d bytes", writer.statusSet, writer.written)
+			}
+			targetPath := cache.buildLocalPath(first.URL)
+			if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+				t.Fatalf("expected no cached file after interruption, stat err = %v", err)
+			}
+
+			resume := httptest.NewRequest(http.MethodGet, requestURL, nil)
+			resume.Header.Set("Range", "bytes=2048-")
+			ifRange := modified
+			if tc.status == http.StatusOK {
+				ifRange = modified.Add(-time.Hour)
+			}
+			resume.Header.Set("If-Range", ifRange.Format(http.TimeFormat))
+			rr := httptest.NewRecorder()
+			cache.serveGETRequest(resume, rr)
+			headers := <-requests
+			if headers.Get("Range") != "bytes=2048-" || headers.Get("If-Range") != ifRange.Format(http.TimeFormat) {
+				t.Fatalf("resume headers not forwarded: %v", headers)
+			}
+			if rr.Code != tc.status {
+				t.Fatalf("status = %d, want %d", rr.Code, tc.status)
+			}
+			wantBody := payload
+			if tc.status == http.StatusPartialContent {
+				wantBody = payload[2048:]
+				wantRange := fmt.Sprintf("bytes 2048-%d/%d", len(payload)-1, len(payload))
+				if got := rr.Header().Get("Content-Range"); got != wantRange {
+					t.Fatalf("Content-Range = %q, want %q", got, wantRange)
+				}
+			}
+			if rr.Body.String() != wantBody {
+				t.Fatal("resumed body does not match the requested data")
+			}
+			if rr.Header().Get("Content-Length") != fmt.Sprint(len(wantBody)) || rr.Header().Get("ETag") != "\"package-version\"" {
+				t.Fatalf("unexpected response headers: %v", rr.Header())
+			}
+			if rr.Header().Get("X-Cache") != "MISS" {
+				t.Fatalf("X-Cache = %q, want MISS", rr.Header().Get("X-Cache"))
+			}
+
+			cached, err := os.ReadFile(targetPath)
+			entry, exists := cache.Get(DetermineProtocolFromURL(resume.URL), resume.URL.Host, resume.URL.Path)
+			if tc.status == http.StatusPartialContent {
+				if !os.IsNotExist(err) || exists {
+					t.Fatalf("partial response was cached: read err = %v, metadata exists = %v", err, exists)
+				}
+			} else if err != nil || string(cached) != payload || !exists || entry.Size != int64(len(payload)) {
+				t.Fatalf("full response not cached correctly: read err = %v, size = %d, metadata = %+v", err, len(cached), entry)
+			}
+			partials, err := filepath.Glob(targetPath + ".*.partial")
+			if err != nil || len(partials) != 0 {
+				t.Fatalf("unexpected partial files: %v, err = %v", partials, err)
+			}
+		})
 	}
 }
 

@@ -272,8 +272,19 @@ func (c *FSCache) fetchAndServeCacheMiss(protocol int, r *http.Request, w http.R
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "Error fetching file", http.StatusNotFound)
-		log.Printf("[ERROR:GET:STATUS:%d] %s%s - Error fetching file: received status code %d\n", resp.StatusCode, r.URL.Host, r.URL.Path, resp.StatusCode)
+		if resp.StatusCode >= http.StatusBadRequest {
+			log.Printf("[ERROR:GET:STATUS:%d] %s%s - Error fetching file: received status code %d\n", resp.StatusCode, r.URL.Host, r.URL.Path, resp.StatusCode)
+		}
+
+		// Only a complete 200 response may populate the cache. Forward partial
+		// responses and errors with their original status, headers and body so
+		// clients can resume downloads and handle unsatisfiable ranges.
+		copyResponseHeaders(w.Header(), resp.Header)
+		w.Header().Set("X-Cache", "MISS")
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(responseWriterWithFlush(w), resp.Body); err != nil {
+			log.Printf("[ERROR:GET:STREAM] %s%s - Error forwarding response: %v\n", r.URL.Host, r.URL.Path, err)
+		}
 		return
 	}
 
