@@ -129,15 +129,15 @@ func (cl *RepositoryCleanup) readInRelease() error {
 			cl.Components = strings.Split(strings.TrimSpace(value), " ")
 		case "Architectures":
 			cl.Architectures = strings.Split(strings.TrimSpace(value), " ")
-		case "Date": // Format Sun, 13 Oct 2024 13:53:11 UTC
-			date, err := time.Parse("Mon, 2 Jan 2006 15:04:05 UTC", strings.TrimSpace(value))
+		case "Date":
+			date, err := parseReleaseDate(value)
 			if err != nil {
 				return err
 			}
 
 			cl.Date = date
-		case "Valid-Until": // Format Sun, 13 Oct 2024 13:53:11 UTC
-			date, err := time.Parse("Mon, 2 Jan 2006 15:04:05 UTC", strings.TrimSpace(value))
+		case "Valid-Until":
+			date, err := parseReleaseDate(value)
 			if err != nil {
 				return err
 			}
@@ -149,6 +149,14 @@ func (cl *RepositoryCleanup) readInRelease() error {
 	cl.Checksums = checksums
 
 	return nil
+}
+
+func parseReleaseDate(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasSuffix(value, " UTC") {
+		return time.Parse("Mon, 2 Jan 2006 15:04:05 UTC", value)
+	}
+	return time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", value)
 }
 
 // VerifyChecksums verifies the supported checksums of the files in the repository.

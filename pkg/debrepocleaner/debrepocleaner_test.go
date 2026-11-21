@@ -11,7 +11,29 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 )
+
+func TestNewParsesNumericTimeZonesInReleaseDates(t *testing.T) {
+	repo := t.TempDir()
+	inRelease := "Date: Fri, 21 Aug 2026 03:57:24 +0000\n" +
+		"Valid-Until: Tue, 1 Sep 2026 05:57:24 +0200\n"
+	writeFile(t, filepath.Join(repo, "dists", "stable", "InRelease"), []byte(inRelease))
+
+	cleanup, err := New(repo, "stable")
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+
+	wantDate := time.Date(2026, time.August, 21, 3, 57, 24, 0, time.UTC)
+	if !cleanup.Date.Equal(wantDate) {
+		t.Errorf("Date = %v, want %v", cleanup.Date, wantDate)
+	}
+	wantValidUntil := time.Date(2026, time.September, 1, 3, 57, 24, 0, time.UTC)
+	if !cleanup.ValidUntil.Equal(wantValidUntil) {
+		t.Errorf("ValidUntil = %v, want %v", cleanup.ValidUntil, wantValidUntil)
+	}
+}
 
 func TestVerifySHA256sumsIncludesDebFilesFromMultiplePackageIndexes(t *testing.T) {
 	repo := t.TempDir()
