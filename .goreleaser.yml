@@ -88,6 +88,7 @@ nfpms:
         dst: /lib/systemd/system/goaptcacher-repoverify.timer
       - src: config.yaml-example
         dst: /etc/goaptcacher/config.yaml
+        type: config
 
     section: net
     priority: optional
